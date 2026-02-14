@@ -5,9 +5,11 @@ import time
 import cv2
 import argparse
 import sys
+import platform
 
-# Suppress JAX GPU warnings if on CPU
-jax.config.update("jax_platform_name", "cpu") # Optional: force CPU if desired
+# Use CPU on Windows, GPU on other platforms
+if platform.system() == "win32":
+    jax.config.update("jax_platform_name", "cpu")
 
 # ==========================================
 # 1. Math Helpers & SDFs
