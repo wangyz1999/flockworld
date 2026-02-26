@@ -1,11 +1,18 @@
 [project]
 name = "flockworld"
 version = "0.1.0"
-description = "Add your description here"
+description = "JAX-based boid flocking Gymnasium environment for video world-model research"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "gymnasium>=1.2.3",
     "jax>=0.9.0.1 ; sys_platform == 'win32'",
     "jax[cuda12]>=0.9.0.1 ; sys_platform != 'win32'",
+    "numpy>=1.26.0",
+    "omegaconf>=2.3.0",
     "opencv-python>=4.13.0.92",
+    "rich>=14.3.3",
 ]
+
+[tool.setuptools.packages.find]
+include = ["flockworld*"]

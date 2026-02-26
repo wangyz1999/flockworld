@@ -1,0 +1,34 @@
+canvas:
+  width: 140
+  height: 140
+
+boids:
+  num_agents: 30
+  max_speed: 2.0
+  min_speed: 0.5
+  separation_radius: 25.0
+  alignment_radius: 50.0
+  cohesion_radius: 50.0
+  separation_weight: 1.5
+  alignment_weight: 1.0
+  cohesion_weight: 1.0
+  agent_size: 10.0
+
+env:
+  max_steps: 1000
+  boundary: "wrap"  # wrap | reflect
+
+rendering:
+  background_color: [0.05, 0.05, 0.1]
+  agent_color: [0.2, 0.8, 0.2]
+  controlled_color: [1.0, 0.3, 0.3]
+  aa_blur: 0.005
+
+video:
+  fps: 30
+  duration: 30.0
+  full_obs_path: "output/full_obs.mp4"
+  partial_obs_path: "output/partial_obs.mp4"
+  partial_obs_size: 128
+
+seed: 42
