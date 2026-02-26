@@ -10,8 +10,6 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-from flockworld.core.types import BoidState
-
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -90,20 +88,43 @@ def compute_boid_steering(
 def update_boids(
     positions, velocities,
     acceleration, controlled_velocity,
-    dt, min_speed, max_speed,
+    dt, min_speed, max_speed, max_turn_rate,
     canvas_w, canvas_h, boundary,
 ):
-    """Advance all boids by one timestep.  Returns (new_pos, new_vel, new_headings)."""
-    new_vel = velocities + acceleration * dt
-    new_vel = new_vel.at[0].set(controlled_velocity)
+    """Advance all boids by one timestep.  Returns (new_pos, new_vel, new_headings).
 
-    speed = jnp.sqrt(jnp.sum(new_vel ** 2, axis=-1, keepdims=True) + 1e-8)
-    clamped_speed = jnp.clip(speed, min_speed, max_speed)
-    direction = new_vel / speed
-    new_vel_clamped = direction * clamped_speed
+    Agents steer by *rotating* their heading toward the desired direction
+    (clamped by ``max_turn_rate`` per tick) and always move nose-first.
+    This prevents sideways sliding.
+    """
+    headings = jnp.arctan2(velocities[:, 0], velocities[:, 1])
 
-    is_controlled = jnp.zeros((positions.shape[0], 1)).at[0].set(1.0)
-    new_vel = new_vel * is_controlled + new_vel_clamped * (1.0 - is_controlled)
+    # Desired velocity for autonomous agents
+    desired_vel = velocities + acceleration * dt
+    desired_heading = jnp.arctan2(desired_vel[:, 0], desired_vel[:, 1])
+    desired_speed = jnp.sqrt(jnp.sum(desired_vel ** 2, axis=-1) + 1e-8)
+
+    # Angular difference wrapped to [-pi, pi]
+    delta = desired_heading - headings
+    delta = jnp.arctan2(jnp.sin(delta), jnp.cos(delta))
+
+    # Clamp turn rate so agents rotate gradually
+    delta = jnp.clip(delta, -max_turn_rate, max_turn_rate)
+    new_headings = headings + delta
+
+    new_speed = jnp.clip(desired_speed, min_speed, max_speed)
+
+    # Override controlled agent (index 0)
+    ctrl_heading = jnp.arctan2(controlled_velocity[0], controlled_velocity[1])
+    ctrl_speed = jnp.sqrt(jnp.sum(controlled_velocity ** 2) + 1e-8)
+    new_headings = new_headings.at[0].set(ctrl_heading)
+    new_speed = new_speed.at[0].set(ctrl_speed)
+
+    # Reconstruct velocity from heading + speed (always nose-first)
+    new_vel = jnp.stack([
+        jnp.sin(new_headings) * new_speed,
+        jnp.cos(new_headings) * new_speed,
+    ], axis=-1)
 
     new_pos = positions + new_vel * dt
 
@@ -118,10 +139,6 @@ def update_boids(
         vel_x = jnp.where(hit_x, -new_vel[:, 0], new_vel[:, 0])
         vel_y = jnp.where(hit_y, -new_vel[:, 1], new_vel[:, 1])
         new_vel = jnp.stack([vel_x, vel_y], axis=-1)
-
-    # heading = angle of velocity vector measured from +Y axis (clockwise)
-    # so that heading=0 means moving "up" (+Y in pixel space, which is down on screen)
-    # This matches the triangle tip which points along the rotated +Y direction.
-    new_headings = jnp.arctan2(new_vel[:, 0], new_vel[:, 1])
+        new_headings = jnp.arctan2(new_vel[:, 0], new_vel[:, 1])
 
     return new_pos, new_vel, new_headings

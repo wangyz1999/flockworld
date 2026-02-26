@@ -13,7 +13,7 @@ import jax.numpy as jnp
 
 from flockworld.core.types import BoidState, EnvState
 from flockworld.core.boids import compute_boid_steering, update_boids
-from flockworld.rendering.renderer import build_uv_grid, render_frame
+from flockworld.rendering.renderer import render_frame
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,7 @@ class EnvConfig:
     alignment_weight: float = 1.0
     cohesion_weight: float = 1.0
     agent_size: float = 10.0
+    max_turn_rate: float = 0.15
     max_steps: int = 1000
     boundary: str = "wrap"
     background_color: tuple = (0.05, 0.05, 0.1)
@@ -56,6 +57,7 @@ def env_config_from_omega(cfg) -> EnvConfig:
         alignment_weight=cfg.boids.alignment_weight,
         cohesion_weight=cfg.boids.cohesion_weight,
         agent_size=cfg.boids.agent_size,
+        max_turn_rate=cfg.boids.max_turn_rate,
         max_steps=cfg.env.max_steps,
         boundary=cfg.env.boundary,
         background_color=tuple(cfg.rendering.background_color),
@@ -84,6 +86,7 @@ class EnvParams:
         self.alignment_weight = jnp.float32(ec.alignment_weight)
         self.cohesion_weight = jnp.float32(ec.cohesion_weight)
         self.agent_size = jnp.float32(ec.agent_size)
+        self.max_turn_rate = jnp.float32(ec.max_turn_rate)
         self.aa_blur = jnp.float32(ec.aa_blur)
         self.agent_color = jnp.array(ec.agent_color, dtype=jnp.float32)
         self.controlled_color = jnp.array(ec.controlled_color, dtype=jnp.float32)
@@ -137,7 +140,7 @@ def step(state: EnvState, action: jnp.ndarray, p: EnvParams):
     new_pos, new_vel, new_headings = update_boids(
         state.boids.positions, state.boids.velocities,
         acc, controlled_vel,
-        p.dt, p.min_speed, p.max_speed,
+        p.dt, p.min_speed, p.max_speed, p.max_turn_rate,
         p.canvas_w, p.canvas_h, p.boundary,
     )
 

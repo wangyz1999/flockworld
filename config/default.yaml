@@ -13,6 +13,7 @@ boids:
   alignment_weight: 1.0
   cohesion_weight: 0.5
   agent_size: 10.0
+  max_turn_rate: 0.15  # radians per tick — limits how fast agents rotate
 
 env:
   max_steps: 1000
@@ -26,7 +27,7 @@ rendering:
 
 video:
   fps: 30
-  duration: 300.0
+  duration: 30.0
   full_obs_path: "output/full_obs.mp4"
   partial_obs_path: "output/partial_obs.mp4"
   partial_obs_size: 128
