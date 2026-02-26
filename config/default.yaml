@@ -19,10 +19,10 @@ env:
   boundary: "wrap"  # wrap | reflect
 
 rendering:
-  background_color: [0.05, 0.05, 0.1]
-  agent_color: [0.2, 0.8, 0.2]
-  controlled_color: [1.0, 0.3, 0.3]
-  aa_blur: 0.005
+  background_color: [0.098, 0.098, 0.098]
+  agent_color: [0.706, 0.831, 1.0]
+  controlled_color: [1.0, 0.502, 0.447]
+  aa_blur: 0.003
 
 video:
   fps: 30

@@ -95,7 +95,7 @@ class EnvParams:
 
 def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
     """Initialise a new episode with random boid positions and velocities."""
-    k1, k2, k3 = jax.random.split(key, 3)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
 
     positions = jax.random.uniform(
         k1, (ec.num_agents, 2),
@@ -109,23 +109,19 @@ def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
     velocities = jnp.stack([jnp.sin(angles) * speed, jnp.cos(angles) * speed], axis=-1)
     headings = jnp.arctan2(velocities[:, 0], velocities[:, 1])
 
-    boids = BoidState(positions=positions, velocities=velocities, headings=headings)
+    phase_offsets = jax.random.uniform(
+        k4, (ec.num_agents,), minval=0.0, maxval=2.0 * jnp.pi * 3.0,
+    )
+
+    boids = BoidState(
+        positions=positions, velocities=velocities,
+        headings=headings, phase_offsets=phase_offsets,
+    )
     return EnvState(boids=boids, step_count=0, key=key)
 
 
 def step(state: EnvState, action: jnp.ndarray, p: EnvParams):
-    """Advance the environment by one tick.
-
-    Parameters
-    ----------
-    state : EnvState
-    action : scalar JAX array — direction angle (radians) for agent 0.
-    p : EnvParams — pre-converted JAX parameters.
-
-    Returns
-    -------
-    next_state, reward, done, info
-    """
+    """Advance the environment by one tick."""
     acc = compute_boid_steering(
         state.boids.positions, state.boids.velocities,
         p.separation_radius, p.alignment_radius, p.cohesion_radius,
@@ -145,7 +141,10 @@ def step(state: EnvState, action: jnp.ndarray, p: EnvParams):
         p.canvas_w, p.canvas_h, p.boundary,
     )
 
-    new_boids = BoidState(positions=new_pos, velocities=new_vel, headings=new_headings)
+    new_boids = BoidState(
+        positions=new_pos, velocities=new_vel,
+        headings=new_headings, phase_offsets=state.boids.phase_offsets,
+    )
     new_step = state.step_count + 1
     new_state = EnvState(boids=new_boids, step_count=new_step, key=state.key)
 
@@ -161,6 +160,8 @@ def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
     return render_frame(
         state.boids.positions,
         state.boids.headings,
+        state.boids.phase_offsets,
+        jnp.float32(state.step_count),
         uv_grid,
         p.canvas_w, p.canvas_h,
         p.agent_size,

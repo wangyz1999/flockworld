@@ -11,9 +11,10 @@ class BoidState(NamedTuple):
     Agent at index 0 is always the controllable agent.
     """
 
-    positions: jnp.ndarray   # (N, 2) — x, y in pixel coordinates
-    velocities: jnp.ndarray  # (N, 2) — vx, vy
-    headings: jnp.ndarray    # (N,)   — angle in radians
+    positions: jnp.ndarray      # (N, 2) — x, y in pixel coordinates
+    velocities: jnp.ndarray     # (N, 2) — vx, vy
+    headings: jnp.ndarray       # (N,)   — angle in radians
+    phase_offsets: jnp.ndarray  # (N,)   — per-boid wing flap phase
 
 
 class EnvState(NamedTuple):
