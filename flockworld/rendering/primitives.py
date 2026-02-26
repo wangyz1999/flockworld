@@ -39,8 +39,24 @@ def sd_triangle(p, p0, p1, p2):
     return dist
 
 
-def render_boid_at(uv, position, heading, size, wing_open,
-                   color_left, color_right, stroke_color, aa_blur):
+def render_boid_simple(uv, position, heading, size, color, aa_blur):
+    """Render a plain filled triangle boid.
+
+    Returns (blended_color, mask) for compositing.
+    """
+    local_p = rotate_2d(uv - position, -heading)
+
+    nose  = jnp.array([0.0, size * 2.0])
+    lwing = jnp.array([-size, -size * 2.0])
+    rwing = jnp.array([ size, -size * 2.0])
+
+    d = sd_triangle(local_p, nose, lwing, rwing)
+    mask = 1.0 - smoothstep(0.0, aa_blur, d)
+    return color * mask, mask
+
+
+def render_boid_fancy(uv, position, heading, size, wing_open,
+                      color_left, color_right, stroke_color, aa_blur):
     """Render a two-tone paper-plane boid with wing flapping and outline.
 
     The shape mirrors the Processing sketch: nose at top, two swept wings
@@ -50,26 +66,21 @@ def render_boid_at(uv, position, heading, size, wing_open,
     """
     local_p = rotate_2d(uv - position, -heading)
 
-    # Geometry matching the Processing boid (in local space, nose = +Y)
     nose  = jnp.array([0.0, size * 2.0])
     lwing = jnp.array([-size * wing_open, -size * 2.0])
     rwing = jnp.array([ size * wing_open, -size * 2.0])
     notch = jnp.array([0.0, -size * 0.472])
 
-    # Left half: nose → lwing → notch
     d_left = sd_triangle(local_p, nose, lwing, notch)
-    # Right half: nose → notch → rwing
     d_right = sd_triangle(local_p, nose, notch, rwing)
 
     mask_left  = 1.0 - smoothstep(0.0, aa_blur, d_left)
     mask_right = 1.0 - smoothstep(0.0, aa_blur, d_right)
 
-    # Outline: thin ring around the full shape
     d_full = jnp.minimum(d_left, d_right)
     stroke_width = aa_blur * 3.0
     outline_mask = (1.0 - smoothstep(0.0, aa_blur, d_full)) * smoothstep(-stroke_width, -stroke_width * 0.3, d_full)
 
-    # Composite: left fill, right fill, then outline on top
     fill_color = color_left * mask_left + color_right * mask_right
     total_mask = jnp.clip(mask_left + mask_right, 0.0, 1.0)
 

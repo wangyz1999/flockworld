@@ -2,7 +2,8 @@
 
 Usage
 -----
-    python main.py                              # defaults
+    python main.py                              # headless video recording
+    python main.py env.render=true              # live window, no video
     python main.py boids.num_agents=100         # override via CLI
     python main.py video.duration=5 seed=123    # multiple overrides
 """
@@ -39,27 +40,8 @@ def load_config(cli_args: list[str] | None = None):
     return cfg
 
 
-def main():
-    cfg = load_config(sys.argv[1:])
-    ec = env_config_from_omega(cfg)
-    params = EnvParams(ec)
-
-    console.print(
-        f"[bold]FlockWorld[/bold]  |  {ec.num_agents} agents  |  "
-        f"{ec.canvas_w}x{ec.canvas_h}  |  boundary={ec.boundary}  |  "
-        f"device={jax.devices()[0]}"
-    )
-
-    uv_grid = build_uv_grid(ec.canvas_w, ec.canvas_h)
-
-    key = jax.random.PRNGKey(cfg.seed)
-    state = reset(key, ec)
-
-    fps = cfg.video.fps
-    duration = cfg.video.duration
-    total_frames = int(fps * duration)
-
-    # Warmup JIT compilation
+def _warmup(state, params, uv_grid):
+    """Run one step + render to trigger JIT compilation."""
     console.print("[dim]Compiling JAX kernels...[/dim]", end=" ")
     t0 = time.time()
     dummy_action = jnp.float32(0.0)
@@ -67,13 +49,49 @@ def main():
     _ = render(state, params, uv_grid).block_until_ready()
     console.print(f"[dim]done in {time.time() - t0:.1f}s[/dim]")
 
-    # Re-reset after warmup
-    state = reset(key, ec)
+
+def _run_render(cfg, ec, params, uv_grid, state):
+    """Live window mode — display frames with cv2, no video written."""
+    import cv2
+
+    fps = cfg.video.fps
+    frame_delay = max(1, int(1000 / fps))
+    window_name = "FlockWorld"
+    cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+    console.print("[bold green]Render mode[/bold green] — press Q or ESC to quit")
+
+    while True:
+        action = state.boids.headings[0]
+        state, _, done, _ = step(state, action, params)
+
+        frame_f = render(state, params, uv_grid)
+        frame_u8 = np.clip(np.asarray(frame_f) * 255, 0, 255).astype(np.uint8)
+        frame_bgr = cv2.cvtColor(frame_u8, cv2.COLOR_RGB2BGR)
+
+        cv2.imshow(window_name, frame_bgr)
+        key = cv2.waitKey(frame_delay) & 0xFF
+        if key in (ord("q"), 27):  # q or ESC
+            break
+        if done:
+            break
+
+    cv2.destroyAllWindows()
+    console.print("[green]Done.[/green]")
+
+
+def _run_headless(cfg, ec, params, uv_grid, state):
+    """Headless mode — record video to disk."""
+    fps = cfg.video.fps
+    duration = cfg.video.duration
+    total_frames = int(fps * duration)
+
+    full_path = None if cfg.video.partial_only else cfg.video.full_obs_path
+    partial_path = None if cfg.video.full_obs_only else cfg.video.partial_obs_path
 
     with VideoRecorder(
-        full_obs_path=cfg.video.full_obs_path,
-        partial_obs_path=cfg.video.partial_obs_path,
-        partial_obs_size=cfg.video.partial_obs_size,
+        full_obs_path=full_path,
+        partial_obs_path=partial_path,
+        partial_obs_size=cfg.canvas.partial,
         fps=fps,
         canvas_w=ec.canvas_w,
         canvas_h=ec.canvas_h,
@@ -88,11 +106,9 @@ def main():
         ) as progress:
             task = progress.add_task("Recording", total=total_frames)
 
-            for i in range(total_frames):
-                # Default policy: keep current heading (stays on device)
+            for _ in range(total_frames):
                 action = state.boids.headings[0]
-
-                state, reward, done, info = step(state, action, params)
+                state, _, done, _ = step(state, action, params)
 
                 frame_f = render(state, params, uv_grid)
                 frame_u8 = np.clip(np.asarray(frame_f) * 255, 0, 255).astype(np.uint8)
@@ -105,10 +121,34 @@ def main():
                 if done:
                     break
 
+    saved = [p for p in (full_path, partial_path) if p is not None]
+    console.print(f"[green]Done.[/green] Videos saved to: {', '.join(saved)}")
+
+
+def main():
+    cfg = load_config(sys.argv[1:])
+    ec = env_config_from_omega(cfg)
+    params = EnvParams(ec)
+
+    mode = "render" if cfg.env.render else "headless"
     console.print(
-        f"[green]Done.[/green] Videos saved to: "
-        f"{cfg.video.full_obs_path}, {cfg.video.partial_obs_path}"
+        f"[bold]FlockWorld[/bold]  |  {ec.num_agents} agents  |  "
+        f"{ec.canvas_w}x{ec.canvas_h}  |  boundary={ec.boundary}  |  "
+        f"mode={mode}  |  device={jax.devices()[0]}"
     )
+
+    uv_grid = build_uv_grid(ec.canvas_w, ec.canvas_h)
+
+    key = jax.random.PRNGKey(cfg.seed)
+    state = reset(key, ec)
+
+    _warmup(state, params, uv_grid)
+    state = reset(key, ec)
+
+    if cfg.env.render:
+        _run_render(cfg, ec, params, uv_grid, state)
+    else:
+        _run_headless(cfg, ec, params, uv_grid, state)
 
 
 if __name__ == "__main__":

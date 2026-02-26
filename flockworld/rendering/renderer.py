@@ -1,13 +1,13 @@
 """Compose a full frame image from boid arrays using JAX SDF rendering.
 
 Ports the visual style from the Processing boid sketch: two-tone split
-wings, wing flapping, light-source shading, and outline stroke.
+wings, wing flapping, and outline stroke.
 """
 
 import jax
 import jax.numpy as jnp
 
-from flockworld.rendering.primitives import render_boid_at
+from flockworld.rendering.primitives import render_boid_simple, render_boid_fancy
 
 
 # ── coordinate helpers ───────────────────────────────────────────────────
@@ -33,7 +33,7 @@ def pixel_size_to_uv(size, height):
     return size / height * 2.0
 
 
-# ── light & colour helpers ───────────────────────────────────────────────
+# ── colour helpers ────────────────────────────────────────────────────────
 
 def _wave(t):
     """Oscillating wave for wing flapping (ported from Processing)."""
@@ -67,36 +67,41 @@ def _controlled_color_gradient(positions, canvas_h):
     return colors  # (N, 3)
 
 
-def _compute_light_shading(positions, headings, light_pos, canvas_diag):
-    """Per-boid light factor: angle-based left/right split + distance fade."""
-    to_light = light_pos[None, :] - positions  # (N, 2)
-    vel_dir = jnp.stack([jnp.sin(headings), jnp.cos(headings)], axis=-1)
+# ── per-pixel rendering (simple) ─────────────────────────────────────────
 
-    # Cross product sign → which side is lit
-    cross = vel_dir[:, 0] * to_light[:, 1] - vel_dir[:, 1] * to_light[:, 0]
-    angle_factor = jnp.tanh(cross / (canvas_diag * 0.1 + 1e-6))  # in [-1, 1]
-
-    dist = jnp.sqrt(jnp.sum(to_light ** 2, axis=-1) + 1e-8)
-    brightness = jnp.clip(1.0 - dist / (canvas_diag * 1.2), 0.15, 1.0)
-
-    return angle_factor, brightness  # (N,), (N,)
+def _render_pixel_simple(uv, boid_uv, heading, size_uv, color, aa_blur):
+    return render_boid_simple(uv, boid_uv, heading, size_uv, color, aa_blur)
 
 
-# ── per-pixel rendering ─────────────────────────────────────────────────
+def _composite_pixel_simple(uv, boid_uvs, headings, size_uv,
+                            colors, bg_color, aa_blur):
+    all_colors, all_masks = jax.vmap(
+        _render_pixel_simple,
+        in_axes=(None, 0, 0, None, 0, None),
+    )(uv, boid_uvs, headings, size_uv, colors, aa_blur)
 
-def _render_pixel_for_boid(uv, boid_uv, heading, size_uv, wing_open,
-                           color_left, color_right, stroke_color, aa_blur):
-    color, mask = render_boid_at(
+    def _blend(carry, x):
+        c, m = x
+        return carry * (1.0 - m) + c * m, None
+
+    color, _ = jax.lax.scan(_blend, bg_color, (all_colors, all_masks))
+    return color
+
+
+# ── per-pixel rendering (fancy) ─────────────────────────────────────────
+
+def _render_pixel_fancy(uv, boid_uv, heading, size_uv, wing_open,
+                        color_left, color_right, stroke_color, aa_blur):
+    return render_boid_fancy(
         uv, boid_uv, heading, size_uv, wing_open,
         color_left, color_right, stroke_color, aa_blur,
     )
-    return color, mask
 
 
-def _composite_pixel(uv, boid_uvs, headings, size_uv, wing_opens,
-                     colors_left, colors_right, stroke_colors, bg_color, aa_blur):
+def _composite_pixel_fancy(uv, boid_uvs, headings, size_uv, wing_opens,
+                           colors_left, colors_right, stroke_colors, bg_color, aa_blur):
     all_colors, all_masks = jax.vmap(
-        _render_pixel_for_boid,
+        _render_pixel_fancy,
         in_axes=(None, 0, 0, None, 0, 0, 0, 0, None),
     )(uv, boid_uvs, headings, size_uv, wing_opens,
       colors_left, colors_right, stroke_colors, aa_blur)
@@ -111,70 +116,91 @@ def _composite_pixel(uv, boid_uvs, headings, size_uv, wing_opens,
 
 # ── full frame (JIT-compiled) ────────────────────────────────────────────
 
+def _vmap_image(composite_fn, in_axes):
+    """Double-vmap a per-pixel composite function over (H, W)."""
+    render_row = jax.vmap(composite_fn, in_axes=in_axes)
+    return jax.vmap(render_row, in_axes=in_axes)
+
+
 @jax.jit
+def _render_frame_simple(
+    boid_uvs, render_headings, size_uv, colors,
+    uv_grid, background_color, aa_blur,
+):
+    axes = (0, None, None, None, None, None, None)
+    render_image = _vmap_image(_composite_pixel_simple, axes)
+    return render_image(
+        uv_grid, boid_uvs, render_headings, size_uv,
+        colors, background_color, aa_blur,
+    )
+
+
+@jax.jit
+def _render_frame_fancy(
+    boid_uvs, render_headings, size_uv, wing_opens,
+    colors_left, colors_right, stroke_colors,
+    uv_grid, background_color, aa_blur,
+):
+    axes = (0, None, None, None, None, None, None, None, None, None)
+    render_image = _vmap_image(_composite_pixel_fancy, axes)
+    return render_image(
+        uv_grid, boid_uvs, render_headings, size_uv, wing_opens,
+        colors_left, colors_right, stroke_colors, background_color, aa_blur,
+    )
+
+
 def render_frame(
-    positions, headings, phase_offsets, step_count,
+    positions, velocities, phase_offsets, step_count,
     uv_grid,
     width, height,
     agent_size, agent_color, controlled_color, background_color,
     aa_blur,
+    fancy_shape, flap_wings,
 ):
-    """Render a complete (H, W, 3) float32 frame with Processing-style visuals."""
+    """Render a complete (H, W, 3) float32 frame."""
     boid_uvs = pixel_to_uv(positions, width, height)
     size_uv = pixel_size_to_uv(agent_size, height)
-
     n_agents = positions.shape[0]
-    render_headings = -headings
 
-    # Wing flapping
-    wing_opens = _wing_openness(step_count, phase_offsets)
+    # Nose is at local +Y, so after rotation by θ the nose points at
+    # (-sin θ, cos θ) in UV space.  We need that to equal the UV velocity
+    # direction (vx, -vy).  Solving: θ = arctan2(-vx, -vy).
+    render_headings = jnp.arctan2(-velocities[:, 0], -velocities[:, 1])
 
-    # Moving light source (figure-eight pattern like Processing)
-    t_light = step_count / 30.0
-    light_x = width / 2.0 + 0.3 * width * jnp.sin(2.0 * t_light) * jnp.cos(2.0 * t_light)
-    light_y = height / 2.0 + 0.3 * height * jnp.sin(t_light)
-    light_pos = jnp.array([light_x, light_y])
-    canvas_diag = jnp.sqrt(width ** 2 + height ** 2)
-
-    angle_factor, brightness = _compute_light_shading(
-        positions, headings, light_pos, canvas_diag,
-    )
-
-    # Base colours: soft blue for agents, gradient for controlled
+    # Base colours
     base_fill = jnp.broadcast_to(
-        jnp.array([0.706, 0.831, 1.0]),  # rgb(180, 212, 255)
+        jnp.array([0.706, 0.831, 1.0]),
         (n_agents, 3),
     )
     base_stroke = jnp.broadcast_to(
-        jnp.array([0.525, 0.714, 0.965]),  # rgb(134, 182, 246)
+        jnp.array([0.525, 0.714, 0.965]),
         (n_agents, 3),
     )
 
-    # Controlled agent: warm gradient
     ctrl_colors = _controlled_color_gradient(positions, height)
-    base_fill = base_fill.at[0].set(ctrl_colors[0] * 1.1)
+    base_fill = base_fill.at[0].set(jnp.clip(ctrl_colors[0] * 1.1, 0, 1))
     base_stroke = base_stroke.at[0].set(ctrl_colors[0])
 
-    # Light-based left/right shading
-    lighten = 0.08
-    af = angle_factor[:, None]  # (N, 1)
-    br = brightness[:, None]    # (N, 1)
+    # Move controlled agent (index 0) to the end so it renders on top
+    order = jnp.concatenate([jnp.arange(1, n_agents), jnp.array([0])])
+    boid_uvs = boid_uvs[order]
+    render_headings = render_headings[order]
+    base_fill = base_fill[order]
+    base_stroke = base_stroke[order]
 
-    colors_left  = jnp.clip(base_fill * br + lighten * jnp.clip(af, 0, 1), 0, 1)
-    colors_right = jnp.clip(base_fill * br + lighten * jnp.clip(-af, 0, 1), 0, 1)
-    stroke_colors = jnp.clip(base_stroke * br, 0, 1)
+    if fancy_shape:
+        wing_opens = _wing_openness(step_count, phase_offsets) if flap_wings \
+            else jnp.ones(n_agents)
+        wing_opens = wing_opens[order]
+        frame = _render_frame_fancy(
+            boid_uvs, render_headings, size_uv, wing_opens,
+            base_fill, base_fill, base_stroke,
+            uv_grid, background_color, aa_blur,
+        )
+    else:
+        frame = _render_frame_simple(
+            boid_uvs, render_headings, size_uv, base_fill,
+            uv_grid, background_color, aa_blur,
+        )
 
-    render_row = jax.vmap(
-        _composite_pixel,
-        in_axes=(0, None, None, None, None, None, None, None, None, None),
-    )
-    render_image = jax.vmap(
-        render_row,
-        in_axes=(0, None, None, None, None, None, None, None, None, None),
-    )
-
-    frame = render_image(
-        uv_grid, boid_uvs, render_headings, size_uv, wing_opens,
-        colors_left, colors_right, stroke_colors, background_color, aa_blur,
-    )
     return jnp.clip(frame, 0.0, 1.0)

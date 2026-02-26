@@ -1,35 +1,41 @@
+seed: 42
+
 canvas:
-  width: 1080
-  height: 1920
+  width: 720
+  height: 720
+  partial: 128
 
 boids:
-  num_agents: 30
-  max_speed: 2.0
-  min_speed: 0.5
-  separation_radius: 30.0
-  alignment_radius: 60.0
-  cohesion_radius: 60.0
-  separation_weight: 3.0
-  alignment_weight: 1.0
-  cohesion_weight: 0.5
-  agent_size: 10.0
-  max_turn_rate: 0.15  # radians per tick — limits how fast agents rotate
+  num_agents: 20          # total number of boids (index 0 is the controlled agent)
+  max_speed: 2.0          # pixels per tick upper bound
+  min_speed: 0.5          # pixels per tick lower bound — boids never stop
+  separation_radius: 20.0 # px — neighbours closer than this are repelled; farther ones ignored
+  alignment_radius: 60.0  # px — neighbours closer than this influence heading; farther ones ignored
+  cohesion_radius: 60.0   # px — neighbours closer than this pull the boid toward their centre; farther ones ignored
+  separation_weight: 10.0 # how strongly boids push away from close neighbours (higher = more scattered)
+  alignment_weight: 1.0   # how strongly boids match the direction of neighbours (higher = more uniform)
+  cohesion_weight: 0.2    # how strongly boids are pulled toward the group centre (higher = tighter flocks)
+  agent_size: 10.0        # px — half-span of the triangle boid shape
+  max_turn_rate: 0.15     # radians per tick — limits how fast agents rotate
 
 env:
   max_steps: 1000
   boundary: "wrap"  # wrap | reflect
+  render: false     # true = show live window (no video); false = headless video recording
 
 rendering:
   background_color: [0.098, 0.098, 0.098]
   agent_color: [0.706, 0.831, 1.0]
   controlled_color: [1.0, 0.502, 0.447]
   aa_blur: 0.003
+  agent_shape: "fancy"  # simple = plain triangle | fancy = two-tone split wings with outline
+  flap_wings: true      # animate wing spread over time (only applies to fancy shape)
 
 video:
   fps: 30
   duration: 30.0
   full_obs_path: "output/full_obs.mp4"
   partial_obs_path: "output/partial_obs.mp4"
-  partial_obs_size: 128
+  full_obs_only: false   # skip partial obs video
+  partial_only: false    # skip full obs video
 
-seed: 42

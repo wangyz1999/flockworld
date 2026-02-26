@@ -39,6 +39,8 @@ class EnvConfig:
     agent_color: tuple = (0.2, 0.8, 0.2)
     controlled_color: tuple = (1.0, 0.3, 0.3)
     aa_blur: float = 0.005
+    agent_shape: str = "simple"
+    flap_wings: bool = False
     dt: float = 1.0
 
 
@@ -64,6 +66,8 @@ def env_config_from_omega(cfg) -> EnvConfig:
         agent_color=tuple(cfg.rendering.agent_color),
         controlled_color=tuple(cfg.rendering.controlled_color),
         aa_blur=cfg.rendering.aa_blur,
+        agent_shape=cfg.rendering.agent_shape,
+        flap_wings=cfg.rendering.flap_wings,
     )
 
 
@@ -92,6 +96,8 @@ class EnvParams:
         self.controlled_color = jnp.array(ec.controlled_color, dtype=jnp.float32)
         self.background_color = jnp.array(ec.background_color, dtype=jnp.float32)
         self.boundary = ec.boundary
+        self.fancy_shape = ec.agent_shape == "fancy"
+        self.flap_wings = ec.flap_wings
 
 
 # ── reset / step ────────────────────────────────────────────────────────
@@ -162,7 +168,7 @@ def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
     """Render the current state to an (H, W, 3) float32 image (JIT-compiled)."""
     return render_frame(
         state.boids.positions,
-        state.boids.headings,
+        state.boids.velocities,
         state.boids.phase_offsets,
         jnp.float32(state.step_count),
         uv_grid,
@@ -170,4 +176,5 @@ def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
         p.agent_size,
         p.agent_color, p.controlled_color, p.background_color,
         p.aa_blur,
+        p.fancy_shape, p.flap_wings,
     )
