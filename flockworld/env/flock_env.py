@@ -1,7 +1,7 @@
 """Pure-functional JAX environment for the boid flocking simulation.
 
-All functions are free of side-effects and designed for ``jax.jit``.
-The mutable Gymnasium wrapper lives in ``gym_wrapper.py``.
+All hot-path functions are ``@jax.jit``-compiled.  The mutable Gymnasium
+wrapper lives in ``gym_wrapper.py``.
 """
 
 from __future__ import annotations
@@ -65,6 +65,32 @@ def env_config_from_omega(cfg) -> EnvConfig:
     )
 
 
+# ── JAX constants from config (created once, reused) ────────────────────
+
+class EnvParams:
+    """Pre-converted JAX arrays from EnvConfig, avoiding repeated conversion."""
+
+    def __init__(self, ec: EnvConfig):
+        self.ec = ec
+        self.canvas_w = jnp.float32(ec.canvas_w)
+        self.canvas_h = jnp.float32(ec.canvas_h)
+        self.max_speed = jnp.float32(ec.max_speed)
+        self.min_speed = jnp.float32(ec.min_speed)
+        self.dt = jnp.float32(ec.dt)
+        self.separation_radius = jnp.float32(ec.separation_radius)
+        self.alignment_radius = jnp.float32(ec.alignment_radius)
+        self.cohesion_radius = jnp.float32(ec.cohesion_radius)
+        self.separation_weight = jnp.float32(ec.separation_weight)
+        self.alignment_weight = jnp.float32(ec.alignment_weight)
+        self.cohesion_weight = jnp.float32(ec.cohesion_weight)
+        self.agent_size = jnp.float32(ec.agent_size)
+        self.aa_blur = jnp.float32(ec.aa_blur)
+        self.agent_color = jnp.array(ec.agent_color, dtype=jnp.float32)
+        self.controlled_color = jnp.array(ec.controlled_color, dtype=jnp.float32)
+        self.background_color = jnp.array(ec.background_color, dtype=jnp.float32)
+        self.boundary = ec.boundary
+
+
 # ── reset / step ────────────────────────────────────────────────────────
 
 def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
@@ -74,7 +100,7 @@ def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
     positions = jax.random.uniform(
         k1, (ec.num_agents, 2),
         minval=jnp.array([0.0, 0.0]),
-        maxval=jnp.array([ec.canvas_w, ec.canvas_h]),
+        maxval=jnp.array([float(ec.canvas_w), float(ec.canvas_h)]),
     )
     angles = jax.random.uniform(k2, (ec.num_agents,), minval=-jnp.pi, maxval=jnp.pi)
     speed = jax.random.uniform(
@@ -87,70 +113,57 @@ def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
     return EnvState(boids=boids, step_count=0, key=key)
 
 
-class _SteeringCfg:
-    """Lightweight attribute-bag passed to ``compute_boid_steering``."""
-
-    def __init__(self, ec: EnvConfig):
-        self.boundary = ec.boundary
-        self.canvas_w = float(ec.canvas_w)
-        self.canvas_h = float(ec.canvas_h)
-        self.separation_radius = ec.separation_radius
-        self.alignment_radius = ec.alignment_radius
-        self.cohesion_radius = ec.cohesion_radius
-        self.separation_weight = ec.separation_weight
-        self.alignment_weight = ec.alignment_weight
-        self.cohesion_weight = ec.cohesion_weight
-
-
-def step(state: EnvState, action: float, ec: EnvConfig):
+def step(state: EnvState, action: jnp.ndarray, p: EnvParams):
     """Advance the environment by one tick.
 
     Parameters
     ----------
     state : EnvState
-    action : float  — direction angle (radians) for the controlled agent.
-    ec : EnvConfig
+    action : scalar JAX array — direction angle (radians) for agent 0.
+    p : EnvParams — pre-converted JAX parameters.
 
     Returns
     -------
-    next_state, observation, reward, done, info
+    next_state, reward, done, info
     """
-    scfg = _SteeringCfg(ec)
-    acc = compute_boid_steering(state.boids, scfg)
-
-    # Controlled agent velocity from action angle
-    controlled_vel = jnp.array([
-        jnp.sin(action) * ec.max_speed,
-        jnp.cos(action) * ec.max_speed,
-    ])
-
-    new_boids = update_boids(
-        state.boids, acc, controlled_vel, ec.dt,
-        ec.min_speed, ec.max_speed,
-        float(ec.canvas_w), float(ec.canvas_h),
-        ec.boundary,
+    acc = compute_boid_steering(
+        state.boids.positions, state.boids.velocities,
+        p.separation_radius, p.alignment_radius, p.cohesion_radius,
+        p.separation_weight, p.alignment_weight, p.cohesion_weight,
+        p.canvas_w, p.canvas_h, p.boundary,
     )
 
+    controlled_vel = jnp.array([
+        jnp.sin(action) * p.max_speed,
+        jnp.cos(action) * p.max_speed,
+    ])
+
+    new_pos, new_vel, new_headings = update_boids(
+        state.boids.positions, state.boids.velocities,
+        acc, controlled_vel,
+        p.dt, p.min_speed, p.max_speed,
+        p.canvas_w, p.canvas_h, p.boundary,
+    )
+
+    new_boids = BoidState(positions=new_pos, velocities=new_vel, headings=new_headings)
     new_step = state.step_count + 1
     new_state = EnvState(boids=new_boids, step_count=new_step, key=state.key)
 
-    done = new_step >= ec.max_steps
-    reward = 0.0  # placeholder
+    done = new_step >= p.ec.max_steps
+    reward = 0.0
     info = {}
 
     return new_state, reward, done, info
 
 
-def render(state: EnvState, ec: EnvConfig, uv_grid: jnp.ndarray) -> jnp.ndarray:
-    """Render the current state to an (H, W, 3) float32 image."""
+def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
+    """Render the current state to an (H, W, 3) float32 image (JIT-compiled)."""
     return render_frame(
-        state.boids,
+        state.boids.positions,
+        state.boids.headings,
         uv_grid,
-        ec.canvas_w,
-        ec.canvas_h,
-        ec.agent_size,
-        jnp.array(ec.agent_color),
-        jnp.array(ec.controlled_color),
-        jnp.array(ec.background_color),
-        ec.aa_blur,
+        p.canvas_w, p.canvas_h,
+        p.agent_size,
+        p.agent_color, p.controlled_color, p.background_color,
+        p.aa_blur,
     )

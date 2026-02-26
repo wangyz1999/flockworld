@@ -10,15 +10,21 @@ Usage
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
+from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, SpinnerColumn
 
-from flockworld.env.flock_env import EnvConfig, env_config_from_omega, render, reset, step
+from flockworld.env.flock_env import EnvParams, env_config_from_omega, render, reset, step
 from flockworld.rendering.renderer import build_uv_grid
 from flockworld.video.recorder import VideoRecorder
+
+console = Console()
 
 
 def load_config(cli_args: list[str] | None = None):
@@ -36,19 +42,33 @@ def load_config(cli_args: list[str] | None = None):
 def main():
     cfg = load_config(sys.argv[1:])
     ec = env_config_from_omega(cfg)
+    params = EnvParams(ec)
 
-    print(f"FlockWorld  |  {ec.num_agents} agents  |  "
-          f"{ec.canvas_w}x{ec.canvas_h}  |  boundary={ec.boundary}")
+    console.print(
+        f"[bold]FlockWorld[/bold]  |  {ec.num_agents} agents  |  "
+        f"{ec.canvas_w}x{ec.canvas_h}  |  boundary={ec.boundary}  |  "
+        f"device={jax.devices()[0]}"
+    )
 
     uv_grid = build_uv_grid(ec.canvas_w, ec.canvas_h)
 
-    import jax
     key = jax.random.PRNGKey(cfg.seed)
     state = reset(key, ec)
 
     fps = cfg.video.fps
     duration = cfg.video.duration
     total_frames = int(fps * duration)
+
+    # Warmup JIT compilation
+    console.print("[dim]Compiling JAX kernels...[/dim]", end=" ")
+    t0 = time.time()
+    dummy_action = jnp.float32(0.0)
+    state, _, _, _ = step(state, dummy_action, params)
+    _ = render(state, params, uv_grid).block_until_ready()
+    console.print(f"[dim]done in {time.time() - t0:.1f}s[/dim]")
+
+    # Re-reset after warmup
+    state = reset(key, ec)
 
     with VideoRecorder(
         full_obs_path=cfg.video.full_obs_path,
@@ -69,11 +89,12 @@ def main():
             task = progress.add_task("Recording", total=total_frames)
 
             for i in range(total_frames):
-                action = float(state.boids.headings[0])
+                # Default policy: keep current heading (stays on device)
+                action = state.boids.headings[0]
 
-                state, reward, done, info = step(state, action, ec)
+                state, reward, done, info = step(state, action, params)
 
-                frame_f = render(state, ec, uv_grid)
+                frame_f = render(state, params, uv_grid)
                 frame_u8 = np.clip(np.asarray(frame_f) * 255, 0, 255).astype(np.uint8)
 
                 controlled_pos = np.asarray(state.boids.positions[0])
@@ -84,7 +105,10 @@ def main():
                 if done:
                     break
 
-    print(f"Done. Videos saved to: {cfg.video.full_obs_path}, {cfg.video.partial_obs_path}")
+    console.print(
+        f"[green]Done.[/green] Videos saved to: "
+        f"{cfg.video.full_obs_path}, {cfg.video.partial_obs_path}"
+    )
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import numpy as np
 
 from flockworld.env.flock_env import (
     EnvConfig,
+    EnvParams,
     env_config_from_omega,
     render,
     reset as jax_reset,
@@ -37,6 +38,8 @@ class FlockEnv(gym.Env):
         else:
             self.ec = EnvConfig()
 
+        self.params = EnvParams(self.ec)
+
         self.observation_space = gym.spaces.Box(
             low=0, high=255,
             shape=(self.ec.canvas_h, self.ec.canvas_w, 3),
@@ -47,10 +50,6 @@ class FlockEnv(gym.Env):
         )
 
         self._uv_grid = build_uv_grid(self.ec.canvas_w, self.ec.canvas_h)
-        self._render_jit = jax.jit(lambda boids: render_frame_jit(
-            boids, self._uv_grid, self.ec,
-        ))
-
         self._key = jax.random.PRNGKey(seed)
         self._state = None
 
@@ -65,8 +64,8 @@ class FlockEnv(gym.Env):
         return obs, {}
 
     def step(self, action):
-        action_val = float(action[0]) if hasattr(action, "__len__") else float(action)
-        self._state, reward, done, info = jax_step(self._state, action_val, self.ec)
+        action_val = jnp.float32(action[0]) if hasattr(action, "__len__") else jnp.float32(action)
+        self._state, reward, done, info = jax_step(self._state, action_val, self.params)
         obs = self._render_obs()
         return obs, float(reward), bool(done), False, info
 
@@ -76,15 +75,10 @@ class FlockEnv(gym.Env):
     # ── internals ────────────────────────────────────────────────────
 
     def _render_obs(self) -> np.ndarray:
-        frame = render(self._state, self.ec, self._uv_grid)
+        frame = render(self._state, self.params, self._uv_grid)
         frame_np = np.asarray(frame)
         return np.clip(frame_np * 255, 0, 255).astype(np.uint8)
 
     @property
     def state(self):
         return self._state
-
-
-def render_frame_jit(boids, uv_grid, ec):
-    """Thin wrapper kept outside the class for JIT compatibility."""
-    return render(boids, ec, uv_grid)
