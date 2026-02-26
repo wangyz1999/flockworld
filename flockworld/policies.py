@@ -57,20 +57,22 @@ def _random(state, params, policy_state, key):
 # ── perlin (smooth organic wandering) ────────────────────────────────────
 
 def _perlin(state, params, policy_state, key):
-    """Smooth wandering using layered sinusoidal noise.
+    """Smooth wandering with large-scale sweeping motion.
 
-    Three incommensurate frequencies are summed to produce a slowly-varying
-    heading offset that feels organic and non-repetitive.
+    A slowly accumulating base angle is perturbed by layered sinusoids at
+    incommensurate frequencies.  The result is an absolute heading that
+    drifts continuously, producing wide arcs across the canvas rather than
+    spinning in place.
     """
     t = policy_state.get("t", 0.0)
 
-    angle = (
-        0.60 * jnp.sin(t * 0.017)
-        + 0.30 * jnp.sin(t * 0.043 + 2.1)
-        + 0.15 * jnp.sin(t * 0.091 + 5.3)
+    drift = t * 0.008
+    wobble = (
+        1.20 * jnp.sin(t * 0.011 + 0.0)
+        + 0.70 * jnp.sin(t * 0.029 + 2.1)
+        + 0.35 * jnp.sin(t * 0.071 + 5.3)
     )
-    base_heading = state.boids.headings[0]
-    action = base_heading + angle
+    action = drift + wobble
 
     policy_state = {**policy_state, "t": t + 1.0}
     return action, policy_state
