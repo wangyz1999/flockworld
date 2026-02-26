@@ -84,11 +84,35 @@ def compute_boid_steering(
     return acc
 
 
+def enforce_min_separation(positions, min_dist, canvas_w, canvas_h, boundary):
+    """Push overlapping boids apart by directly adjusting positions.
+
+    This bypasses the turn-rate limiter so boids physically cannot overlap
+    below ``min_dist`` pixels.  Applied *after* the velocity integration.
+    """
+    if boundary == "wrap":
+        disp = _pairwise_displacement_wrap(positions, canvas_w, canvas_h)
+    else:
+        disp = _pairwise_displacement_reflect(positions, canvas_w, canvas_h)
+
+    dist = _pairwise_distance(disp)
+
+    overlap = ((dist < min_dist) & (dist > 1e-6)).astype(jnp.float32)
+    penetration = (min_dist - dist).clip(min=0.0)
+
+    direction = -disp / (dist[..., None] + 1e-8)
+    push = direction * (penetration[..., None] * 0.5) * overlap[..., None]
+    correction = push.sum(axis=1)
+
+    return positions + correction
+
+
 @partial(jax.jit, static_argnames=("boundary",))
 def update_boids(
     positions, velocities,
     acceleration, controlled_velocity,
     dt, min_speed, max_speed, max_turn_rate,
+    min_separation,
     canvas_w, canvas_h, boundary,
 ):
     """Advance all boids by one timestep.  Returns (new_pos, new_vel, new_headings).
@@ -140,5 +164,17 @@ def update_boids(
         vel_y = jnp.where(hit_y, -new_vel[:, 1], new_vel[:, 1])
         new_vel = jnp.stack([vel_x, vel_y], axis=-1)
         new_headings = jnp.arctan2(new_vel[:, 0], new_vel[:, 1])
+
+    new_pos = enforce_min_separation(
+        new_pos, min_separation, canvas_w, canvas_h, boundary,
+    )
+
+    if boundary == "wrap":
+        new_pos = jnp.mod(new_pos, jnp.array([canvas_w, canvas_h]))
+    else:
+        new_pos = jnp.stack([
+            jnp.clip(new_pos[:, 0], 0.0, canvas_w),
+            jnp.clip(new_pos[:, 1], 0.0, canvas_h),
+        ], axis=-1)
 
     return new_pos, new_vel, new_headings
