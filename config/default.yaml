@@ -21,7 +21,7 @@ boids:
 
 env:
   max_steps: 1000
-  boundary: "wrap"        # wrap | reflect
+  boundary: "reflect"        # wrap | reflect
   agent_policy: "perlin"  # straight | random | perlin | circle | lissajous
   render: false           # true = show live window (no video); false = headless video recording
 
@@ -31,7 +31,7 @@ rendering:
   controlled_color: [1.0, 0.502, 0.447]
   aa_blur: 0.003
   agent_shape: "fancy"  # simple = plain triangle | fancy = two-tone split wings with outline
-  flap_wings: true      # animate wing spread over time (only applies to fancy shape)
+  flap_wings: false      # animate wing spread over time (only applies to fancy shape)
 
 video:
   fps: 30
