@@ -32,8 +32,16 @@ def _pairwise_distance(displacement):
 # ── flocking rules ──────────────────────────────────────────────────────
 
 def separation(displacement, distance, radius, weight):
+    """Steer away from nearby neighbours with inverse-distance scaling.
+
+    Closer agents produce exponentially stronger repulsion to prevent
+    overlap and clumping.
+    """
     mask = ((distance < radius) & (distance > 1e-6)).astype(jnp.float32)
-    steer = -displacement / (distance[..., None] + 1e-8)
+    inv_dist = 1.0 / (distance + 1e-4)
+    # Quadratic falloff: much stronger when very close
+    strength = inv_dist * inv_dist
+    steer = -displacement / (distance[..., None] + 1e-8) * strength[..., None]
     steer = (steer * mask[..., None]).sum(axis=1)
     return steer * weight
 
@@ -111,6 +119,9 @@ def update_boids(
         vel_y = jnp.where(hit_y, -new_vel[:, 1], new_vel[:, 1])
         new_vel = jnp.stack([vel_x, vel_y], axis=-1)
 
+    # heading = angle of velocity vector measured from +Y axis (clockwise)
+    # so that heading=0 means moving "up" (+Y in pixel space, which is down on screen)
+    # This matches the triangle tip which points along the rotated +Y direction.
     new_headings = jnp.arctan2(new_vel[:, 0], new_vel[:, 1])
 
     return new_pos, new_vel, new_headings

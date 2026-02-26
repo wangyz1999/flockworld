@@ -39,26 +39,40 @@ def sd_triangle(p, p0, p1, p2):
     return dist
 
 
-def triangle_vertices(heading, size):
-    """Return the three local-space vertices of an isoceles boid triangle.
+def sd_paper_plane(p, heading, size):
+    """Signed distance for a paper-plane shape (outer hull minus tail notch).
 
-    The tip points in the *heading* direction.  Returns (p0, p1, p2) each
-    shape (2,).
+    The nose points in the *heading* direction.  The shape is an elongated
+    triangle with a V-shaped cutout at the tail, giving a folded-paper look.
+
+    Local geometry (before rotation, nose pointing +Y):
+        nose:       (0, size)
+        left wing:  (-size*0.45, -size*0.6)
+        right wing: ( size*0.45, -size*0.6)
+        notch tip:  (0, -size*0.15)   (cuts into the tail)
     """
-    tip = rotate_2d(jnp.array([0.0, size]), heading)
-    left = rotate_2d(jnp.array([-size * 0.5, -size * 0.5]), heading)
-    right = rotate_2d(jnp.array([size * 0.5, -size * 0.5]), heading)
-    return tip, left, right
+    local_p = rotate_2d(p, -heading)
+
+    # Outer hull triangle
+    nose  = jnp.array([0.0,          size])
+    lwing = jnp.array([-size * 0.45, -size * 0.6])
+    rwing = jnp.array([ size * 0.45, -size * 0.6])
+    d_outer = sd_triangle(local_p, nose, lwing, rwing)
+
+    # Tail notch triangle (subtracted)
+    notch_tip = jnp.array([0.0, -size * 0.15])
+    d_notch = sd_triangle(local_p, notch_tip, rwing, lwing)
+
+    # Boolean subtraction: outer AND NOT notch
+    return jnp.maximum(d_outer, -d_notch)
 
 
-def render_triangle_at(uv, position, heading, size, color, aa_blur=0.005):
-    """Compute the color contribution of a single boid triangle at *uv*.
+def render_boid_at(uv, position, heading, size, color, aa_blur=0.005):
+    """Compute the color contribution of a single paper-plane boid at *uv*.
 
-    *uv* is a single 2D point in pixel-normalised coordinates.
-    Returns (rgb, mask) where mask ∈ [0, 1].
+    Returns (rgb, mask) where mask is in [0, 1].
     """
     local_uv = uv - position
-    tip, left, right = triangle_vertices(heading, size)
-    d = sd_triangle(local_uv, tip, left, right)
+    d = sd_paper_plane(local_uv, heading, size)
     mask = 1.0 - smoothstep(0.0, aa_blur, d)
     return color, mask

@@ -1,17 +1,17 @@
 canvas:
-  width: 140
-  height: 140
+  width: 1080
+  height: 1920
 
 boids:
   num_agents: 30
   max_speed: 2.0
   min_speed: 0.5
-  separation_radius: 25.0
-  alignment_radius: 50.0
-  cohesion_radius: 50.0
-  separation_weight: 1.5
+  separation_radius: 30.0
+  alignment_radius: 60.0
+  cohesion_radius: 60.0
+  separation_weight: 3.0
   alignment_weight: 1.0
-  cohesion_weight: 1.0
+  cohesion_weight: 0.5
   agent_size: 10.0
 
 env:
@@ -26,7 +26,7 @@ rendering:
 
 video:
   fps: 30
-  duration: 30.0
+  duration: 300.0
   full_obs_path: "output/full_obs.mp4"
   partial_obs_path: "output/partial_obs.mp4"
   partial_obs_size: 128

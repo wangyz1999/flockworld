@@ -8,7 +8,7 @@ the result is returned as an (H, W, 3) float32 array in [0, 1].
 import jax
 import jax.numpy as jnp
 
-from flockworld.rendering.primitives import render_triangle_at
+from flockworld.rendering.primitives import render_boid_at
 
 
 # ── coordinate helpers ───────────────────────────────────────────────────
@@ -38,7 +38,7 @@ def pixel_size_to_uv(size, height):
 # ── per-pixel rendering ─────────────────────────────────────────────────
 
 def _render_pixel_for_boid(uv, boid_uv, heading, size_uv, color, aa_blur):
-    _, mask = render_triangle_at(uv, boid_uv, heading, size_uv, color, aa_blur)
+    _, mask = render_boid_at(uv, boid_uv, heading, size_uv, color, aa_blur)
     return color * mask, mask
 
 
@@ -73,6 +73,12 @@ def render_frame(
     boid_uvs = pixel_to_uv(positions, width, height)
     size_uv = pixel_size_to_uv(agent_size, height)
 
+    # Negate headings for rendering: in pixel space +Y is downward, but
+    # in UV space +Y is upward.  The heading is computed as arctan2(vx, vy)
+    # in pixel space, so we negate it so the triangle nose points in the
+    # screen-space velocity direction.
+    render_headings = -headings
+
     n_agents = positions.shape[0]
     colors = jnp.broadcast_to(agent_color, (n_agents, 3))
     colors = colors.at[0].set(controlled_color)
@@ -85,6 +91,6 @@ def render_frame(
     )
 
     frame = render_image(
-        uv_grid, boid_uvs, headings, size_uv, colors, background_color, aa_blur,
+        uv_grid, boid_uvs, render_headings, size_uv, colors, background_color, aa_blur,
     )
     return jnp.clip(frame, 0.0, 1.0)
