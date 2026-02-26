@@ -25,6 +25,7 @@ class EnvConfig:
     num_agents: int = 50
     max_speed: float = 2.0
     min_speed: float = 0.5
+    max_force: float = 0.09
     separation_radius: float = 25.0
     alignment_radius: float = 50.0
     cohesion_radius: float = 50.0
@@ -53,6 +54,7 @@ def env_config_from_omega(cfg) -> EnvConfig:
         num_agents=cfg.boids.num_agents,
         max_speed=cfg.boids.max_speed,
         min_speed=cfg.boids.min_speed,
+        max_force=cfg.boids.max_force,
         separation_radius=cfg.boids.separation_radius,
         alignment_radius=cfg.boids.alignment_radius,
         cohesion_radius=cfg.boids.cohesion_radius,
@@ -84,6 +86,7 @@ class EnvParams:
         self.canvas_h = jnp.float32(ec.canvas_h)
         self.max_speed = jnp.float32(ec.max_speed)
         self.min_speed = jnp.float32(ec.min_speed)
+        self.max_force = jnp.float32(ec.max_force)
         self.dt = jnp.float32(ec.dt)
         self.separation_radius = jnp.float32(ec.separation_radius)
         self.alignment_radius = jnp.float32(ec.alignment_radius)
@@ -138,6 +141,7 @@ def step(state: EnvState, action: jnp.ndarray, p: EnvParams):
         state.boids.positions, state.boids.velocities,
         p.separation_radius, p.alignment_radius, p.cohesion_radius,
         p.separation_weight, p.alignment_weight, p.cohesion_weight,
+        p.max_speed, p.max_force,
         p.canvas_w, p.canvas_h, p.boundary,
     )
 

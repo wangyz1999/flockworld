@@ -9,12 +9,13 @@ boids:
   num_agents: 20          # total number of boids (index 0 is the controlled agent)
   max_speed: 2.0          # pixels per tick upper bound
   min_speed: 0.5          # pixels per tick lower bound — boids never stop
-  separation_radius: 50.0 # px — neighbours closer than this are repelled; farther ones ignored
-  alignment_radius: 60.0  # px — neighbours closer than this influence heading; farther ones ignored
+  max_force: 0.09         # max steering force per tick (Reynolds model)
+  separation_radius: 65.0 # px — neighbours closer than this are repelled; farther ones ignored
+  alignment_radius: 100.0 # px — neighbours closer than this influence heading; farther ones ignored
   cohesion_radius: 60.0   # px — neighbours closer than this pull the boid toward their centre; farther ones ignored
-  separation_weight: 100.0 # how strongly boids push away from close neighbours (higher = more scattered)
+  separation_weight: 1.2  # how strongly boids push away from close neighbours (higher = more scattered)
   alignment_weight: 1.0   # how strongly boids match the direction of neighbours (higher = more uniform)
-  cohesion_weight: 0.2    # how strongly boids are pulled toward the group centre (higher = tighter flocks)
+  cohesion_weight: 1.0    # how strongly boids are pulled toward the group centre (higher = tighter flocks)
   agent_size: 10.0        # px — half-span of the triangle boid shape
   min_separation: 25.0    # px — hard minimum distance; overlapping boids are pushed apart directly
   max_turn_rate: 0.15     # radians per tick — limits how fast agents rotate
