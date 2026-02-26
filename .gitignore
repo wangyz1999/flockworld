@@ -208,3 +208,6 @@ __marimo__/
 
 
 output/
+
+# Un-ignore our package's env submodule (matched by env/ above)
+!flockworld/env/
