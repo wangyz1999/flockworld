@@ -22,6 +22,7 @@ from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, SpinnerColumn
 
 from flockworld.env.flock_env import EnvParams, env_config_from_omega, render, reset, step
+from flockworld.policies import get_policy, init_policy
 from flockworld.rendering.renderer import build_uv_grid
 from flockworld.video.recorder import VideoRecorder
 
@@ -50,7 +51,7 @@ def _warmup(state, params, uv_grid):
     console.print(f"[dim]done in {time.time() - t0:.1f}s[/dim]")
 
 
-def _run_render(cfg, ec, params, uv_grid, state):
+def _run_render(cfg, ec, params, uv_grid, state, policy_fn, policy_state):
     """Live window mode — display frames with cv2, no video written."""
     import cv2
 
@@ -61,7 +62,7 @@ def _run_render(cfg, ec, params, uv_grid, state):
     console.print("[bold green]Render mode[/bold green] — press Q or ESC to quit")
 
     while True:
-        action = state.boids.headings[0]
+        action, policy_state = policy_fn(state, params, policy_state, policy_state["key"])
         state, _, done, _ = step(state, action, params)
 
         frame_f = render(state, params, uv_grid)
@@ -79,7 +80,7 @@ def _run_render(cfg, ec, params, uv_grid, state):
     console.print("[green]Done.[/green]")
 
 
-def _run_headless(cfg, ec, params, uv_grid, state):
+def _run_headless(cfg, ec, params, uv_grid, state, policy_fn, policy_state):
     """Headless mode — record video to disk."""
     fps = cfg.video.fps
     duration = cfg.video.duration
@@ -107,7 +108,7 @@ def _run_headless(cfg, ec, params, uv_grid, state):
             task = progress.add_task("Recording", total=total_frames)
 
             for _ in range(total_frames):
-                action = state.boids.headings[0]
+                action, policy_state = policy_fn(state, params, policy_state, policy_state["key"])
                 state, _, done, _ = step(state, action, params)
 
                 frame_f = render(state, params, uv_grid)
@@ -130,11 +131,14 @@ def main():
     ec = env_config_from_omega(cfg)
     params = EnvParams(ec)
 
+    policy_name = cfg.env.agent_policy
+    policy_fn = get_policy(policy_name)
+
     mode = "render" if cfg.env.render else "headless"
     console.print(
         f"[bold]FlockWorld[/bold]  |  {ec.num_agents} agents  |  "
         f"{ec.canvas_w}x{ec.canvas_h}  |  boundary={ec.boundary}  |  "
-        f"mode={mode}  |  device={jax.devices()[0]}"
+        f"policy={policy_name}  |  mode={mode}  |  device={jax.devices()[0]}"
     )
 
     uv_grid = build_uv_grid(ec.canvas_w, ec.canvas_h)
@@ -145,10 +149,13 @@ def main():
     _warmup(state, params, uv_grid)
     state = reset(key, ec)
 
+    _, policy_key = jax.random.split(key)
+    policy_state = init_policy(policy_name, policy_key)
+
     if cfg.env.render:
-        _run_render(cfg, ec, params, uv_grid, state)
+        _run_render(cfg, ec, params, uv_grid, state, policy_fn, policy_state)
     else:
-        _run_headless(cfg, ec, params, uv_grid, state)
+        _run_headless(cfg, ec, params, uv_grid, state, policy_fn, policy_state)
 
 
 if __name__ == "__main__":

@@ -21,8 +21,9 @@ boids:
 
 env:
   max_steps: 1000
-  boundary: "wrap"  # wrap | reflect
-  render: false     # true = show live window (no video); false = headless video recording
+  boundary: "wrap"        # wrap | reflect
+  agent_policy: "perlin"  # straight | random | perlin | circle | lissajous
+  render: false           # true = show live window (no video); false = headless video recording
 
 rendering:
   background_color: [0.098, 0.098, 0.098]
