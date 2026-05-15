@@ -121,8 +121,7 @@ def _lissajous(state, params, policy_state, key):
     dx = ax * jnp.cos(phase) * freq
     dy = ay * 2.0 * jnp.cos(2.0 * phase) * freq
 
-    # heading angle (note: our coordinate system uses arctan2(vx, vy))
-    action = jnp.arctan2(dx, dy)
+    action = jnp.arctan2(dy, dx)
 
     policy_state = {**policy_state, "t": t + 1.0}
     return action, policy_state

@@ -6,8 +6,9 @@ canvas:
   partial: 128
 
 boids:
-  num_agents: 20          # total number of boids (index 0 is the controlled agent)
+  num_agents: 1500        # JS reference default
   vision: 25.0            # px — single radius for neighbour detection (all three rules)
+  accuracy: 32.0          # approximate neighbour samples per boid; 0 means all neighbours
   alignment: 1.1          # alignment steering weight
   alignment_bias: 1.5     # bias^dot(v_i,v_j) — favours neighbours heading the same way
   cohesion: 1.0           # cohesion steering weight
@@ -17,20 +18,23 @@ boids:
   max_speed: 4.0          # px/tick — boids never go faster than this
   drag: 0.005             # velocity damping per tick (fraction lost)
   noise: 1.0              # heading randomness (scaled by pi/80 rad)
-  agent_size: 10.0        # px — half-span of the triangle boid shape
+  agent_size: 10.0        # px — used by legacy simple/fancy renderers; JS shape is fixed
 
 env:
   max_steps: 1000
-  boundary: "reflect"        # wrap | reflect
-  agent_policy: "perlin"  # straight | random | perlin | circle | lissajous
+  boundary: "wrap"        # wrap | reflect
+  controlled_agent: false # false matches the JS flock: every boid follows flocking only
+  agent_policy: "straight"  # ignored unless controlled_agent=true
   render: false           # true = show live window (no video); false = headless video recording
 
 rendering:
-  background_color: [0.098, 0.098, 0.098]
-  agent_color: [0.706, 0.831, 1.0]
-  controlled_color: [1.0, 0.502, 0.447]
-  aa_blur: 0.003
-  agent_shape: "fancy"  # simple = plain triangle | fancy = two-tone split wings with outline
+  background_color: [0.0862745, 0.0862745, 0.0862745] # JS 0x161616
+  agent_color: [1.0, 1.0, 1.0]
+  controlled_color: [1.0, 1.0, 1.0]
+  aa_blur: 1.0
+  boid_alpha: 0.8
+  agent_shape: "js"  # js = original dart | simple = triangle | fancy = split wings
+  color_mode: "speed" # speed = JS HSV speed tint | fixed = use agent_color for every boid
   flap_wings: false      # animate wing spread over time (only applies to fancy shape)
 
 video:

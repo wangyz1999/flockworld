@@ -20,10 +20,11 @@ from flockworld.rendering.renderer import render_frame
 class EnvConfig:
     """Static configuration extracted from OmegaConf for use inside JIT."""
 
-    canvas_w: int = 800
-    canvas_h: int = 800
-    num_agents: int = 50
+    canvas_w: int = 720
+    canvas_h: int = 720
+    num_agents: int = 1500
     vision: float = 25.0
+    accuracy: float = 32.0
     alignment: float = 1.1
     alignment_bias: float = 1.5
     cohesion: float = 1.0
@@ -36,11 +37,14 @@ class EnvConfig:
     agent_size: float = 10.0
     max_steps: int = 1000
     boundary: str = "wrap"
-    background_color: tuple = (0.05, 0.05, 0.1)
-    agent_color: tuple = (0.2, 0.8, 0.2)
-    controlled_color: tuple = (1.0, 0.3, 0.3)
-    aa_blur: float = 0.005
-    agent_shape: str = "simple"
+    controlled_agent: bool = False
+    background_color: tuple = (0.0862745, 0.0862745, 0.0862745)
+    agent_color: tuple = (1.0, 1.0, 1.0)
+    controlled_color: tuple = (1.0, 1.0, 1.0)
+    aa_blur: float = 1.0
+    agent_shape: str = "js"
+    color_mode: str = "speed"
+    boid_alpha: float = 0.8
     flap_wings: bool = False
     dt: float = 1.0
 
@@ -52,6 +56,7 @@ def env_config_from_omega(cfg) -> EnvConfig:
         canvas_h=cfg.canvas.height,
         num_agents=cfg.boids.num_agents,
         vision=cfg.boids.vision,
+        accuracy=cfg.boids.accuracy,
         alignment=cfg.boids.alignment,
         alignment_bias=cfg.boids.alignment_bias,
         cohesion=cfg.boids.cohesion,
@@ -64,11 +69,14 @@ def env_config_from_omega(cfg) -> EnvConfig:
         agent_size=cfg.boids.agent_size,
         max_steps=cfg.env.max_steps,
         boundary=cfg.env.boundary,
+        controlled_agent=cfg.env.controlled_agent,
         background_color=tuple(cfg.rendering.background_color),
         agent_color=tuple(cfg.rendering.agent_color),
         controlled_color=tuple(cfg.rendering.controlled_color),
         aa_blur=cfg.rendering.aa_blur,
         agent_shape=cfg.rendering.agent_shape,
+        color_mode=cfg.rendering.color_mode,
+        boid_alpha=cfg.rendering.boid_alpha,
         flap_wings=cfg.rendering.flap_wings,
     )
 
@@ -83,6 +91,7 @@ class EnvParams:
         self.canvas_w = jnp.float32(ec.canvas_w)
         self.canvas_h = jnp.float32(ec.canvas_h)
         self.vision = jnp.float32(ec.vision)
+        self.accuracy = jnp.float32(ec.accuracy)
         self.alignment = jnp.float32(ec.alignment)
         self.alignment_bias = jnp.float32(ec.alignment_bias)
         self.cohesion = jnp.float32(ec.cohesion)
@@ -95,11 +104,14 @@ class EnvParams:
         self.dt = jnp.float32(ec.dt)
         self.agent_size = jnp.float32(ec.agent_size)
         self.aa_blur = jnp.float32(ec.aa_blur)
+        self.boid_alpha = jnp.float32(ec.boid_alpha)
         self.agent_color = jnp.array(ec.agent_color, dtype=jnp.float32)
         self.controlled_color = jnp.array(ec.controlled_color, dtype=jnp.float32)
         self.background_color = jnp.array(ec.background_color, dtype=jnp.float32)
         self.boundary = ec.boundary
-        self.fancy_shape = ec.agent_shape == "fancy"
+        self.controlled_agent = ec.controlled_agent
+        self.agent_shape = ec.agent_shape
+        self.color_mode = ec.color_mode
         self.flap_wings = ec.flap_wings
 
 
@@ -107,7 +119,7 @@ class EnvParams:
 
 def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
     """Initialise a new episode with random boid positions and velocities."""
-    k1, k2, k3, k4 = jax.random.split(key, 4)
+    k1, k2, k3, k4, k_state = jax.random.split(key, 5)
 
     positions = jax.random.uniform(
         k1, (ec.num_agents, 2),
@@ -118,8 +130,9 @@ def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
     speed = jax.random.uniform(
         k3, (ec.num_agents,), minval=ec.min_speed, maxval=ec.max_speed,
     )
-    velocities = jnp.stack([jnp.sin(angles) * speed, jnp.cos(angles) * speed], axis=-1)
-    headings = jnp.arctan2(velocities[:, 0], velocities[:, 1])
+    velocities = jnp.stack([jnp.cos(angles) * speed, jnp.sin(angles) * speed], axis=-1)
+    accelerations = jnp.zeros_like(velocities)
+    headings = jnp.arctan2(velocities[:, 1], velocities[:, 0])
 
     phase_offsets = jax.random.uniform(
         k4, (ec.num_agents,), minval=0.0, maxval=2.0 * jnp.pi * 3.0,
@@ -127,38 +140,42 @@ def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
 
     boids = BoidState(
         positions=positions, velocities=velocities,
+        accelerations=accelerations,
         headings=headings, phase_offsets=phase_offsets,
     )
-    return EnvState(boids=boids, step_count=0, key=key)
+    return EnvState(boids=boids, step_count=0, key=k_state)
 
 
 def step(state: EnvState, action: jnp.ndarray, p: EnvParams):
     """Advance the environment by one tick."""
-    acc = compute_boid_steering(
+    controlled_vel = jnp.array([
+        jnp.cos(action) * p.max_speed,
+        jnp.sin(action) * p.max_speed,
+    ])
+
+    new_pos, new_vel, new_headings, new_key = update_boids(
         state.boids.positions, state.boids.velocities,
-        p.vision,
+        state.boids.accelerations, controlled_vel,
+        state.key,
+        p.dt, p.min_speed, p.max_speed,
+        p.drag, p.noise,
+        p.canvas_w, p.canvas_h, p.boundary,
+        p.controlled_agent,
+    )
+
+    new_key, k_accuracy = jax.random.split(new_key)
+    new_acc = compute_boid_steering(
+        new_pos, new_vel, k_accuracy,
+        p.vision, p.accuracy,
         p.alignment, p.alignment_bias,
         p.cohesion, p.separation,
         p.max_speed, p.max_force,
         p.canvas_w, p.canvas_h, p.boundary,
     )
 
-    controlled_vel = jnp.array([
-        jnp.sin(action) * p.max_speed,
-        jnp.cos(action) * p.max_speed,
-    ])
-
-    new_pos, new_vel, new_headings, new_key = update_boids(
-        state.boids.positions, state.boids.velocities,
-        acc, controlled_vel,
-        state.key,
-        p.dt, p.min_speed, p.max_speed,
-        p.drag, p.noise,
-        p.canvas_w, p.canvas_h, p.boundary,
-    )
-
     new_boids = BoidState(
         positions=new_pos, velocities=new_vel,
+        accelerations=new_acc,
         headings=new_headings, phase_offsets=state.boids.phase_offsets,
     )
     new_step = state.step_count + 1
@@ -183,5 +200,6 @@ def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
         p.agent_size,
         p.agent_color, p.controlled_color, p.background_color,
         p.aa_blur,
-        p.fancy_shape, p.flap_wings,
+        p.max_speed, p.boid_alpha,
+        p.agent_shape, p.color_mode, p.flap_wings,
     )

@@ -1,6 +1,9 @@
 # FlockWorld
 
 JAX-based boid flocking simulation wrapped as a Gymnasium environment.
+The default configuration clones the referenced JS/PixiJS flock behavior for
+offline video generation: 1500 boids, JS wraparound, speed-hue tinting, and
+the original five-point dart shape.
 Designed for generating training videos for video-generation world models
 with realistic multi-agent behavior.
 
@@ -15,7 +18,7 @@ automatically use CUDA 12.
 
 ## Quick start
 
-Record a 10-second video with default settings:
+Record a 30-second video with default settings:
 
 ```bash
 python main.py
@@ -48,32 +51,18 @@ for _ in range(100):
 ```
 
 - **Observation**: `(H, W, 3)` uint8 RGB frame
-- **Action**: `Box(-pi, pi, shape=(1,))` — heading angle for the controlled agent (index 0)
+- **Action**: `Box(-pi, pi, shape=(1,))` — heading angle when `env.controlled_agent=true`
 - **Reward**: `0.0` placeholder (to be defined)
 
 ## Configuration
 
-All defaults live in `config/default.yaml`:
+All defaults live in `config/default.yaml`. See the full argument and config reference in [docs/CONFIG.md](/home/wangy/wsl_projects/flockworld/docs/CONFIG.md).
 
-| Section | Key | Default | Description |
-|---------|-----|---------|-------------|
-| `canvas` | `width` / `height` | 800 | Canvas pixel dimensions |
-| `boids` | `num_agents` | 50 | Number of boid agents |
-| `boids` | `max_speed` / `min_speed` | 2.0 / 0.5 | Speed bounds |
-| `boids` | `separation_radius` | 25.0 | Separation neighbourhood |
-| `boids` | `alignment_radius` | 50.0 | Alignment neighbourhood |
-| `boids` | `cohesion_radius` | 50.0 | Cohesion neighbourhood |
-| `boids` | `*_weight` | 1.5 / 1.0 / 1.0 | Rule weights |
-| `boids` | `agent_size` | 10.0 | Triangle size in pixels |
-| `env` | `max_steps` | 1000 | Episode length |
-| `env` | `boundary` | `wrap` | `wrap` or `reflect` |
-| `rendering` | `background_color` | `[0.05, 0.05, 0.1]` | RGB background |
-| `rendering` | `agent_color` | `[0.2, 0.8, 0.2]` | Default boid colour |
-| `rendering` | `controlled_color` | `[1.0, 0.3, 0.3]` | Controlled agent colour |
-| `video` | `fps` | 30 | Video frame rate |
-| `video` | `duration` | 10.0 | Recording length (seconds) |
-| `video` | `partial_obs_size` | 128 | Partial-obs crop side length |
-| `seed` | | 42 | Random seed |
+For a fixed color theme instead of JS speed-hue tinting:
+
+```bash
+python main.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
+```
 
 ## Project structure
 

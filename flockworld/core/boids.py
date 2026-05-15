@@ -8,7 +8,7 @@ Faithfully reproduces the algorithm from the JS/PixiJS reference:
   - Velocity drag, random heading noise, min/max speed clamping
   - No artificial turn-rate limiter — steering force + drag handle it
 
-The controllable agent (index 0) is overridden by the caller.
+Optionally, index 0 can be overridden by the caller for controlled-agent runs.
 """
 
 from functools import partial
@@ -19,13 +19,7 @@ import jax.numpy as jnp
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
-def _pairwise_displacement_wrap(positions, canvas_w, canvas_h):
-    diff = positions[None, :, :] - positions[:, None, :]
-    size = jnp.array([canvas_w, canvas_h], dtype=jnp.float32)
-    return jnp.mod(diff + size / 2, size) - size / 2
-
-
-def _pairwise_displacement_reflect(positions, canvas_w, canvas_h):
+def _pairwise_displacement(positions):
     return positions[None, :, :] - positions[:, None, :]
 
 
@@ -43,24 +37,32 @@ def _limit(vec, max_mag):
 
 def _set_mag(vec, target):
     """Normalise then scale a batch of 2-d vectors to ``target`` length."""
-    mag = jnp.sqrt(jnp.sum(vec ** 2, axis=-1, keepdims=True) + 1e-8)
-    return vec / mag * target
+    sq = jnp.sum(vec ** 2, axis=-1, keepdims=True)
+    mag = jnp.sqrt(sq + 1e-8)
+    return jnp.where(sq > 0.0, vec / mag * target, vec)
 
 
-def _enforce_min_speed(vel, min_speed):
+def _enforce_min_speed(vel, min_speed, key):
     """Ensure every velocity has at least ``min_speed`` magnitude."""
     sq = jnp.sum(vel ** 2, axis=-1, keepdims=True)
     mag = jnp.sqrt(sq + 1e-8)
     scale = jnp.where(sq < min_speed * min_speed, min_speed / mag, 1.0)
-    return vel * scale
+    lifted = vel * scale
+    angles = jax.random.uniform(key, vel.shape[:1], minval=-jnp.pi, maxval=jnp.pi)
+    random_vel = jnp.stack(
+        [jnp.cos(angles) * min_speed, jnp.sin(angles) * min_speed], axis=-1,
+    )
+    return jnp.where(sq <= 1e-8, random_vel, lifted)
 
 
 # ── flocking rules (exact JS reference algorithm) ───────────────────────
 
-def _flock(displacement, sq_dist, velocities, sq_vision,
-           alignment_weight, alignment_bias,
-           cohesion_weight, separation_weight,
-           max_speed, max_force):
+def _flock(
+    displacement, sq_dist, velocities, candidate_mask, sq_vision, accuracy, key,
+    alignment_weight, alignment_bias,
+    cohesion_weight, separation_weight,
+    max_speed, max_force,
+):
     """Compute per-boid acceleration from all three flocking rules.
 
     Mirrors the JS ``Boid.flock()`` method exactly:
@@ -69,8 +71,19 @@ def _flock(displacement, sq_dist, velocities, sq_vision,
       separation: sum of (self−other)/sqrDist for each neighbour
     Each is then Reynolds-steered: setMag(maxSpeed) − vel, limited by maxForce.
     """
-    n = velocities.shape[0]
-    mask = ((sq_dist < sq_vision) & (sq_dist > 1e-6)).astype(jnp.float32)
+    candidate_count = candidate_mask.astype(jnp.float32).sum(axis=1, keepdims=True)
+    sample_prob = jnp.where(
+        (accuracy <= 0.0) | (candidate_count <= accuracy),
+        1.0,
+        accuracy / candidate_count.clip(min=1),
+    )
+    sampled = (jax.random.uniform(key, sq_dist.shape) < sample_prob).astype(jnp.float32)
+    mask = (
+        candidate_mask
+        & (sq_dist < sq_vision)
+        & (sq_dist > 1e-6)
+    ).astype(jnp.float32)
+    mask = mask * sampled
     count = mask.sum(axis=1, keepdims=True)
     has_neighbours = (count > 0.5).astype(jnp.float32)
 
@@ -116,23 +129,30 @@ def _flock(displacement, sq_dist, velocities, sq_vision,
 
 @partial(jax.jit, static_argnames=("boundary",))
 def compute_boid_steering(
-    positions, velocities,
-    vision, alignment_weight, alignment_bias,
+    positions, velocities, key,
+    vision, accuracy, alignment_weight, alignment_bias,
     cohesion_weight, separation_weight,
     max_speed, max_force,
     canvas_w, canvas_h, boundary,
 ):
     """Return (N, 2) acceleration for every agent based on flocking rules."""
-    if boundary == "wrap":
-        disp = _pairwise_displacement_wrap(positions, canvas_w, canvas_h)
-    else:
-        disp = _pairwise_displacement_reflect(positions, canvas_w, canvas_h)
+    # The JS reference wraps positions at the canvas edge, but neighbour
+    # distances are ordinary screen-space distances, not toroidal distances.
+    disp = _pairwise_displacement(positions)
 
     sq_dist = _sq_distance(disp)
     sq_vision = vision * vision
+    cell = jnp.maximum(vision, 1.0)
+    rows = jnp.floor(positions[:, 1] / cell).astype(jnp.int32)
+    cols = jnp.floor(positions[:, 0] / cell).astype(jnp.int32)
+    candidate_mask = (
+        (jnp.abs(rows[:, None] - rows[None, :]) <= 1)
+        & (jnp.abs(cols[:, None] - cols[None, :]) <= 1)
+        & (vision > 0.0)
+    )
 
     return _flock(
-        disp, sq_dist, velocities, sq_vision,
+        disp, sq_dist, velocities, candidate_mask, sq_vision, accuracy, key,
         alignment_weight, alignment_bias,
         cohesion_weight, separation_weight,
         max_speed, max_force,
@@ -147,6 +167,7 @@ def update_boids(
     dt, min_speed, max_speed,
     drag, noise,
     canvas_w, canvas_h, boundary,
+    controlled_agent,
 ):
     """Advance all boids by one timestep.  Returns (new_pos, new_vel, new_headings, new_key).
 
@@ -159,7 +180,7 @@ def update_boids(
       6. wrap or bounce
     """
     n = positions.shape[0]
-    key, k_noise = jax.random.split(key)
+    key, k_noise, k_zero = jax.random.split(key, 3)
 
     # 1. apply acceleration
     new_vel = velocities + acceleration * dt
@@ -177,11 +198,15 @@ def update_boids(
     new_vel = jnp.stack([rx, ry], axis=-1)
 
     # 4. enforce min/max speed
-    new_vel = _enforce_min_speed(new_vel, min_speed)
+    new_vel = _enforce_min_speed(new_vel, min_speed, k_zero)
     new_vel = _limit(new_vel, max_speed)
 
-    # Override controlled agent (index 0)
-    new_vel = new_vel.at[0].set(controlled_velocity)
+    new_vel = jax.lax.cond(
+        controlled_agent,
+        lambda v: v.at[0].set(controlled_velocity),
+        lambda v: v,
+        new_vel,
+    )
 
     # 5. integrate position
     new_pos = positions + new_vel * dt
@@ -200,6 +225,6 @@ def update_boids(
         vel_y = jnp.where(hit_y, -new_vel[:, 1], new_vel[:, 1])
         new_vel = jnp.stack([vel_x, vel_y], axis=-1)
 
-    new_headings = jnp.arctan2(new_vel[:, 0], new_vel[:, 1])
+    new_headings = jnp.arctan2(new_vel[:, 1], new_vel[:, 0])
 
     return new_pos, new_vel, new_headings, key

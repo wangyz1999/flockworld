@@ -8,11 +8,12 @@ import jax.numpy as jnp
 class BoidState(NamedTuple):
     """State of all boids in the simulation.
 
-    Agent at index 0 is always the controllable agent.
+    Agent at index 0 can optionally be used as the controllable agent.
     """
 
     positions: jnp.ndarray      # (N, 2) — x, y in pixel coordinates
     velocities: jnp.ndarray     # (N, 2) — vx, vy
+    accelerations: jnp.ndarray  # (N, 2) — steering force applied next tick
     headings: jnp.ndarray       # (N,)   — angle in radians
     phase_offsets: jnp.ndarray  # (N,)   — per-boid wing flap phase
 

@@ -22,8 +22,8 @@ class FlockEnv(gym.Env):
     """Gymnasium ``Env`` that wraps the pure-JAX boid simulation.
 
     Observations are rendered RGB frames (uint8).
-    The action is a single float — the heading angle for the controlled
-    agent (index 0).
+    The action is a single float. It is used as the heading angle for index 0
+    only when ``EnvConfig.controlled_agent`` is enabled.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 30}

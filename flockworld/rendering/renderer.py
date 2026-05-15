@@ -1,14 +1,16 @@
-"""Compose a full frame image from boid arrays using JAX SDF rendering.
+"""Compose full-frame images from boid arrays using JAX renderers."""
 
-Each boid is a plain filled triangle in a single flat colour.  The
-controlled agent (index 0) uses ``controlled_color``; all others use
-``agent_color``.  No border, no gradient, no colour changes over time.
-"""
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 
-from flockworld.rendering.primitives import render_boid_simple, render_boid_fancy
+from flockworld.rendering.primitives import (
+    render_boid_simple,
+    render_boid_fancy,
+    sd_js_boid_batch,
+    smoothstep,
+)
 
 
 # ── coordinate helpers ───────────────────────────────────────────────────
@@ -101,6 +103,85 @@ def _composite_pixel_fancy_flat(uv, boid_uvs, headings, size_uv, wing_opens,
 
 # ── full frame (JIT-compiled) ────────────────────────────────────────────
 
+def _hsv_to_rgb(h, s, v):
+    """Vectorized equivalent of the JS hsv(h, s, v) helper, normalized to 0..1."""
+    i = jnp.floor(h * 6.0).astype(jnp.int32)
+    f = h * 6.0 - i
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    imod = jnp.mod(i, 6)
+
+    r = jnp.select(
+        [imod == 0, imod == 1, imod == 2, imod == 3, imod == 4],
+        [v, q, p, p, t],
+        default=v,
+    )
+    g = jnp.select(
+        [imod == 0, imod == 1, imod == 2, imod == 3, imod == 4],
+        [t, v, v, q, p],
+        default=p,
+    )
+    b = jnp.select(
+        [imod == 0, imod == 1, imod == 2, imod == 3, imod == 4],
+        [p, p, t, v, v],
+        default=q,
+    )
+    return jnp.stack([r, g, b], axis=-1)
+
+
+@partial(jax.jit, static_argnames=("height", "width", "color_mode"))
+def _render_frame_js_dart(
+    positions, velocities, agent_color, background_color,
+    height: int, width: int,
+    max_speed, alpha, aa_blur,
+    color_mode: str,
+):
+    """Render the original JS PIXI dart with a per-boid patch rasterizer."""
+    image = jnp.broadcast_to(background_color, (height, width, 3)).copy()
+    speed = jnp.sqrt(jnp.sum(velocities ** 2, axis=-1))
+    if color_mode == "fixed":
+        colors = jnp.broadcast_to(agent_color[None, :], (positions.shape[0], 3))
+    else:
+        hue = jnp.clip(speed / (max_speed * 2.0), 0.0, 1.0)
+        colors = _hsv_to_rgb(hue, 1.0, 1.0)
+    headings = jnp.arctan2(velocities[:, 1], velocities[:, 0])
+
+    radius = 9
+    offsets_1d = jnp.arange(-radius, radius + 1)
+    off_x, off_y = jnp.meshgrid(offsets_1d, offsets_1d)
+    offsets = jnp.stack(
+        [off_x.reshape(-1), off_y.reshape(-1)], axis=-1,
+    ).astype(jnp.float32)
+
+    def draw_one(img, inputs):
+        pos, heading, color = inputs
+        cx = jnp.rint(pos[0]).astype(jnp.int32)
+        cy = jnp.rint(pos[1]).astype(jnp.int32)
+        xs = cx + offsets[:, 0].astype(jnp.int32)
+        ys = cy + offsets[:, 1].astype(jnp.int32)
+
+        pixel_pos = jnp.stack(
+            [xs.astype(jnp.float32), ys.astype(jnp.float32)], axis=-1,
+        )
+        rel = pixel_pos - pos
+        c = jnp.cos(-heading)
+        s = jnp.sin(-heading)
+        local = jnp.stack(
+            [rel[:, 0] * c - rel[:, 1] * s, rel[:, 0] * s + rel[:, 1] * c],
+            axis=-1,
+        )
+
+        d = sd_js_boid_batch(local)
+        mask = (1.0 - smoothstep(0.0, aa_blur, d)) * alpha
+        old = img.at[ys, xs].get(mode="fill", fill_value=0.0)
+        new = old * (1.0 - mask[:, None]) + color * mask[:, None]
+        img = img.at[ys, xs].set(new, mode="drop")
+        return img, None
+
+    image, _ = jax.lax.scan(draw_one, image, (positions, headings, colors))
+    return jnp.clip(image, 0.0, 1.0)
+
 def _vmap_image(composite_fn, in_axes):
     """Double-vmap a per-pixel composite function over (H, W)."""
     render_row = jax.vmap(composite_fn, in_axes=in_axes)
@@ -139,9 +220,19 @@ def render_frame(
     width, height,
     agent_size, agent_color, controlled_color, background_color,
     aa_blur,
-    fancy_shape, flap_wings,
+    max_speed, boid_alpha,
+    agent_shape, color_mode, flap_wings,
 ):
     """Render a complete (H, W, 3) float32 frame."""
+    if agent_shape == "js":
+        image_h, image_w = uv_grid.shape[:2]
+        return _render_frame_js_dart(
+            positions, velocities, agent_color, background_color,
+            image_h, image_w,
+            max_speed, boid_alpha, aa_blur,
+            color_mode,
+        )
+
     boid_uvs = pixel_to_uv(positions, width, height)
     size_uv = pixel_size_to_uv(agent_size, height)
     n_agents = positions.shape[0]
@@ -157,7 +248,7 @@ def render_frame(
     render_headings = render_headings[order]
     colors = colors[order]
 
-    if fancy_shape:
+    if agent_shape == "fancy":
         wing_opens = _wing_openness(step_count, phase_offsets) if flap_wings \
             else jnp.ones(n_agents)
         wing_opens = wing_opens[order]
