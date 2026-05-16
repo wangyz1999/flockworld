@@ -15,7 +15,6 @@ class BoidState(NamedTuple):
     velocities: jnp.ndarray     # (N, 2) — vx, vy
     accelerations: jnp.ndarray  # (N, 2) — steering force applied next tick
     headings: jnp.ndarray       # (N,)   — angle in radians
-    phase_offsets: jnp.ndarray  # (N,)   — per-boid wing flap phase
 
 
 class EnvState(NamedTuple):

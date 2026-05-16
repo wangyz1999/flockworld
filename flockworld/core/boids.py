@@ -166,7 +166,7 @@ def update_boids(
     key,
     dt, min_speed, max_speed,
     drag, noise,
-    canvas_w, canvas_h, boundary,
+    canvas_w, canvas_h, boundary_padding, boundary,
     controlled_agent,
 ):
     """Advance all boids by one timestep.  Returns (new_pos, new_vel, new_headings, new_key).
@@ -215,11 +215,15 @@ def update_boids(
     if boundary == "wrap":
         new_pos = jnp.mod(new_pos, jnp.array([canvas_w, canvas_h]))
     else:
-        hit_x = (new_pos[:, 0] < 0) | (new_pos[:, 0] > canvas_w)
-        hit_y = (new_pos[:, 1] < 0) | (new_pos[:, 1] > canvas_h)
+        min_x = boundary_padding
+        min_y = boundary_padding
+        max_x = jnp.maximum(min_x, canvas_w - boundary_padding)
+        max_y = jnp.maximum(min_y, canvas_h - boundary_padding)
+        hit_x = (new_pos[:, 0] < min_x) | (new_pos[:, 0] > max_x)
+        hit_y = (new_pos[:, 1] < min_y) | (new_pos[:, 1] > max_y)
         new_pos = jnp.stack([
-            jnp.clip(new_pos[:, 0], 0.0, canvas_w),
-            jnp.clip(new_pos[:, 1], 0.0, canvas_h),
+            jnp.clip(new_pos[:, 0], min_x, max_x),
+            jnp.clip(new_pos[:, 1], min_y, max_y),
         ], axis=-1)
         vel_x = jnp.where(hit_x, -new_vel[:, 0], new_vel[:, 0])
         vel_y = jnp.where(hit_y, -new_vel[:, 1], new_vel[:, 1])

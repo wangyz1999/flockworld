@@ -1,4 +1,16 @@
 seed: 42
+device: "auto"             # auto | cpu | gpu
+
+generation:
+  num_envs: 1              # number of independent environments to generate in one headless run
+  seed_stride: 1           # env i uses seed + i * seed_stride
+  full_obs_path_template: "output/env_{env:04d}_seed_{seed}_full_obs.mp4"
+  partial_obs_path_template: "output/env_{env:04d}_seed_{seed}_partial_obs.mp4"
+
+trajectory:
+  enabled: false           # save per-frame per-agent state/action trajectories as .npy
+  path: "output/trajectory.npy"
+  path_template: "output/env_{env:04d}_seed_{seed}_trajectory.npy"
 
 canvas:
   width: 720
@@ -12,34 +24,34 @@ boids:
   alignment: 1.1          # alignment steering weight
   alignment_bias: 1.5     # bias^dot(v_i,v_j) — favours neighbours heading the same way
   cohesion: 1.0           # cohesion steering weight
-  separation: 1.1         # separation steering weight
+  separation: 1.5         # separation steering weight
   max_force: 0.2          # max steering force magnitude per tick
   min_speed: 1.0          # px/tick — boids never go slower than this
   max_speed: 4.0          # px/tick — boids never go faster than this
   drag: 0.005             # velocity damping per tick (fraction lost)
-  noise: 1.0              # heading randomness (scaled by pi/80 rad)
-  agent_size: 10.0        # px — used by legacy simple/fancy renderers; JS shape is fixed
+  noise: 0.0              # heading randomness (scaled by pi/80 rad)
+  agent_size: 10.0        # px — scales the JS dart; reflect boundary insets by half this
 
 env:
   max_steps: 1000
-  boundary: "wrap"        # wrap | reflect
+  dt: 1.0                     # simulation time step per tick (physics integration)
+  boundary: "reflect"        # wrap | reflect
   controlled_agent: false # false matches the JS flock: every boid follows flocking only
   agent_policy: "straight"  # ignored unless controlled_agent=true
   render: false           # true = show live window (no video); false = headless video recording
 
 rendering:
-  background_color: [0.0862745, 0.0862745, 0.0862745] # JS 0x161616
+  background_color: [0,0,0] 
   agent_color: [1.0, 1.0, 1.0]
-  controlled_color: [1.0, 1.0, 1.0]
   aa_blur: 1.0
   boid_alpha: 0.8
-  agent_shape: "js"  # js = original dart | simple = triangle | fancy = split wings
   color_mode: "speed" # speed = JS HSV speed tint | fixed = use agent_color for every boid
-  flap_wings: false      # animate wing spread over time (only applies to fancy shape)
 
 video:
   fps: 30
   duration: 30.0
+  warmup: 60           # simulation steps skipped before recording starts
+  chunk_size: 256       # frames generated per JAX batch in headless recording; 1 disables batching
   full_obs_path: "output/full_obs.mp4"
   partial_obs_path: "output/partial_obs.mp4"
   full_obs_only: false   # skip partial obs video

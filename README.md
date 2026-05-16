@@ -1,9 +1,9 @@
 # FlockWorld
 
 JAX-based boid flocking simulation wrapped as a Gymnasium environment.
-The default configuration clones the referenced JS/PixiJS flock behavior for
-offline video generation: 1500 boids, JS wraparound, speed-hue tinting, and
-the original five-point dart shape.
+The default configuration is tuned for offline video generation: 1500 boids,
+reflecting canvas boundaries with an agent-size inset, speed-hue tinting, and
+the original five-point JS/PixiJS dart shape.
 Designed for generating training videos for video-generation world models
 with realistic multi-agent behavior.
 
@@ -29,18 +29,33 @@ Override any parameter via the CLI (OmegaConf dot-list syntax):
 ```bash
 python main.py boids.num_agents=100 canvas.width=512 canvas.height=512
 python main.py video.duration=5 video.fps=60 seed=123
+python main.py device=cpu
+python main.py video.chunk_size=64
+python main.py video.warmup=120
+python main.py generation.num_envs=8 video.duration=5
+python main.py trajectory.enabled=true
 ```
 
 Output videos are written to `output/full_obs.mp4` (entire canvas) and
-`output/partial_obs.mp4` (square crop around the controlled agent).
+`output/partial_obs.mp4` (square crop around the controlled agent). Multi-env
+headless runs use `generation.*_path_template` and write one full/partial pair
+per environment.
+Set `trajectory.enabled=true` to also save per-frame per-agent state/action
+trajectories as `.npy`.
 
 ## Gymnasium API
 
 ```python
-from flockworld.env.gym_wrapper import FlockEnv
-from flockworld.env.flock_env import EnvConfig
+from omegaconf import OmegaConf
 
-env = FlockEnv(env_config=EnvConfig(canvas_w=256, canvas_h=256, num_agents=20))
+from flockworld.env.gym_wrapper import FlockEnv
+
+cfg = OmegaConf.load("config/default.yaml")
+cfg.canvas.width = 256
+cfg.canvas.height = 256
+cfg.boids.num_agents = 20
+
+env = FlockEnv(cfg=cfg)
 obs, info = env.reset(seed=42)
 
 for _ in range(100):
@@ -63,6 +78,19 @@ For a fixed color theme instead of JS speed-hue tinting:
 ```bash
 python main.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
 ```
+
+## Render benchmark
+
+Compare CPU and GPU rendering throughput across agent counts:
+
+```bash
+python scripts/benchmark_render_speed.py --frames 120 --agents 100,250,500,1000,1500
+```
+
+The benchmark writes `output/benchmarks/render_speed.json`,
+`output/benchmarks/render_speed.csv`, and
+`output/benchmarks/render_speed.svg`. It also writes
+`output/benchmarks/render_speed_logx.svg` with a logarithmic x-axis.
 
 ## Project structure
 

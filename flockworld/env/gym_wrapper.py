@@ -3,19 +3,9 @@
 from __future__ import annotations
 
 import gymnasium as gym
-import jax
-import jax.numpy as jnp
 import numpy as np
 
-from flockworld.env.flock_env import (
-    EnvConfig,
-    EnvParams,
-    env_config_from_omega,
-    render,
-    reset as jax_reset,
-    step as jax_step,
-)
-from flockworld.rendering.renderer import build_uv_grid
+from flockworld.runtime import configure_jax_platform
 
 
 class FlockEnv(gym.Env):
@@ -30,13 +20,38 @@ class FlockEnv(gym.Env):
 
     def __init__(self, cfg=None, env_config: EnvConfig | None = None, seed: int = 42):
         super().__init__()
+        if env_config is None and cfg is None:
+            raise ValueError(
+                "FlockEnv requires either cfg (OmegaConf) or env_config (EnvConfig); "
+                "all fields are defined in config/default.yaml.",
+            )
+
+        device = env_config.device if env_config is not None else cfg.device
+
+        configure_jax_platform(device)
+
+        import jax
+        import jax.numpy as jnp
+
+        from flockworld.env.flock_env import (
+            EnvParams,
+            env_config_from_omega,
+            render,
+            reset as jax_reset,
+            step as jax_step,
+        )
+        from flockworld.rendering.renderer import build_uv_grid
+
+        self._jax = jax
+        self._jnp = jnp
+        self._jax_reset = jax_reset
+        self._jax_step = jax_step
+        self._render_frame = render
 
         if env_config is not None:
             self.ec = env_config
-        elif cfg is not None:
-            self.ec = env_config_from_omega(cfg)
         else:
-            self.ec = EnvConfig()
+            self.ec = env_config_from_omega(cfg)
 
         self.params = EnvParams(self.ec)
 
@@ -50,22 +65,28 @@ class FlockEnv(gym.Env):
         )
 
         self._uv_grid = build_uv_grid(self.ec.canvas_w, self.ec.canvas_h)
-        self._key = jax.random.PRNGKey(seed)
+        self._key = self._jax.random.PRNGKey(seed)
         self._state = None
 
     # ── gym interface ────────────────────────────────────────────────
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
-            self._key = jax.random.PRNGKey(seed)
-        self._key, sub = jax.random.split(self._key)
-        self._state = jax_reset(sub, self.ec)
+            self._key = self._jax.random.PRNGKey(seed)
+        self._key, sub = self._jax.random.split(self._key)
+        self._state = self._jax_reset(sub, self.ec)
         obs = self._render_obs()
         return obs, {}
 
     def step(self, action):
-        action_val = jnp.float32(action[0]) if hasattr(action, "__len__") else jnp.float32(action)
-        self._state, reward, done, info = jax_step(self._state, action_val, self.params)
+        action_val = (
+            self._jnp.float32(action[0])
+            if hasattr(action, "__len__")
+            else self._jnp.float32(action)
+        )
+        self._state, reward, done, info = self._jax_step(
+            self._state, action_val, self.params,
+        )
         obs = self._render_obs()
         return obs, float(reward), bool(done), False, info
 
@@ -75,7 +96,7 @@ class FlockEnv(gym.Env):
     # ── internals ────────────────────────────────────────────────────
 
     def _render_obs(self) -> np.ndarray:
-        frame = render(self._state, self.params, self._uv_grid)
+        frame = self._render_frame(self._state, self.params, self._uv_grid)
         frame_np = np.asarray(frame)
         return np.clip(frame_np * 255, 0, 255).astype(np.uint8)
 
