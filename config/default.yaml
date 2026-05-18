@@ -2,7 +2,7 @@ seed: 42
 device: "auto"             # auto | cpu | gpu
 
 generation:
-  num_envs: 1              # number of independent environments to generate in one headless run
+  num_envs: 3              # number of independent environments to generate in one headless run
   seed_stride: 1           # env i uses seed + i * seed_stride
   full_obs_path_template: "output/env_{env:04d}_seed_{seed}_full_obs.mp4"
   partial_obs_path_template: "output/env_{env:04d}_seed_{seed}_partial_obs.mp4"
@@ -11,6 +11,14 @@ trajectory:
   enabled: false           # save per-frame per-agent state/action trajectories as .npy
   path: "output/trajectory.npy"
   path_template: "output/env_{env:04d}_seed_{seed}_trajectory.npy"
+
+collection:
+  enabled: true           # true = write a timestamped structured dataset under output_root
+  output_root: "output"
+  total_episodes: 10         # total episode videos to collect; collection stops exactly at this limit
+  partial_agents: 2        # number of first-agent partial-observation videos to save per episode
+  save_trajectory: true    # save one trajectory .npy per episode in the collection folder
+  timestamp: null          # optional fixed folder name; null uses local time YYYYMMDD_HHMMSS
 
 canvas:
   width: 720

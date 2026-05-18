@@ -21,6 +21,7 @@ class VideoRecorder:
         self,
         full_obs_path: str | Path | None = None,
         partial_obs_path: str | Path | None = None,
+        partial_obs_paths: list[str | Path] | tuple[str | Path, ...] | None = None,
         partial_obs_size: int = 128,
         fps: int = 30,
         canvas_w: int = 800,
@@ -31,6 +32,7 @@ class VideoRecorder:
         self.canvas_h = canvas_h
         self._full_writer = None
         self._partial_writer = None
+        self._partial_writers = []
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
@@ -41,12 +43,21 @@ class VideoRecorder:
                 str(p), fourcc, fps, (canvas_w, canvas_h),
             )
 
+        partial_paths = []
         if partial_obs_path is not None:
-            p = Path(partial_obs_path)
+            partial_paths.append(partial_obs_path)
+        if partial_obs_paths is not None:
+            partial_paths.extend(partial_obs_paths)
+
+        for partial_path in partial_paths:
+            p = Path(partial_path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            self._partial_writer = cv2.VideoWriter(
+            writer = cv2.VideoWriter(
                 str(p), fourcc, fps, (partial_obs_size, partial_obs_size),
             )
+            self._partial_writers.append(writer)
+
+        self._partial_writer = self._partial_writers[0] if self._partial_writers else None
 
     # ── public API ───────────────────────────────────────────────────
 
@@ -56,26 +67,42 @@ class VideoRecorder:
         Parameters
         ----------
         frame_rgb : (H, W, 3) uint8 RGB image.
-        controlled_pos : (2,) pixel position (x, y) of the controlled agent.
+        controlled_pos : (2,) or (K, 2) pixel positions for partial crops.
         """
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
         if self._full_writer is not None:
             self._full_writer.write(frame_bgr)
 
-        if self._partial_writer is not None:
-            crop = self._crop_partial(frame_rgb, controlled_pos)
-            self._partial_writer.write(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
+        if self._partial_writers:
+            positions = self._normalize_positions(controlled_pos)
+            for writer, pos in zip(self._partial_writers, positions):
+                crop = self._crop_partial(frame_rgb, pos)
+                writer.write(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
 
     def close(self):
         if self._full_writer is not None:
             self._full_writer.release()
             self._full_writer = None
-        if self._partial_writer is not None:
-            self._partial_writer.release()
-            self._partial_writer = None
+        for writer in self._partial_writers:
+            writer.release()
+        self._partial_writers = []
+        self._partial_writer = None
 
     # ── internals ────────────────────────────────────────────────────
+
+    def _normalize_positions(self, positions: np.ndarray) -> np.ndarray:
+        positions = np.asarray(positions)
+        if positions.shape == (2,):
+            positions = positions[None, :]
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            raise ValueError(f"Expected partial-observation positions with shape (K, 2), got {positions.shape}.")
+        if positions.shape[0] < len(self._partial_writers):
+            raise ValueError(
+                f"Got {positions.shape[0]} partial-observation positions for "
+                f"{len(self._partial_writers)} writers."
+            )
+        return positions
 
     def _crop_partial(self, frame_rgb: np.ndarray, pos: np.ndarray) -> np.ndarray:
         size = self.partial_obs_size
@@ -114,6 +141,7 @@ class DlpackNvencVideoRecorder:
         self,
         full_obs_path: str | Path | None = None,
         partial_obs_path: str | Path | None = None,
+        partial_obs_paths: list[str | Path] | tuple[str | Path, ...] | None = None,
         partial_obs_size: int = 128,
         fps: int = 30,
         canvas_w: int = 800,
@@ -144,6 +172,7 @@ class DlpackNvencVideoRecorder:
         self._torch = torch
         self._full_sink = None
         self._partial_sink = None
+        self._partial_sinks = []
 
         if full_obs_path is not None:
             self._full_sink = _NvencBitstreamSink(
@@ -158,10 +187,16 @@ class DlpackNvencVideoRecorder:
                 bitrate=bitrate,
             )
 
+        partial_paths = []
         if partial_obs_path is not None:
-            self._partial_sink = _NvencBitstreamSink(
+            partial_paths.append(partial_obs_path)
+        if partial_obs_paths is not None:
+            partial_paths.extend(partial_obs_paths)
+
+        for partial_path in partial_paths:
+            sink = _NvencBitstreamSink(
                 nvc=nvc,
-                path=Path(partial_obs_path),
+                path=Path(partial_path),
                 width=partial_obs_size,
                 height=partial_obs_size,
                 fps=self.fps,
@@ -170,6 +205,9 @@ class DlpackNvencVideoRecorder:
                 preset=preset,
                 bitrate=bitrate,
             )
+            self._partial_sinks.append(sink)
+
+        self._partial_sink = self._partial_sinks[0] if self._partial_sinks else None
 
     def record(self, frame_rgb: np.ndarray, controlled_pos: np.ndarray):
         raise RuntimeError(
@@ -187,22 +225,44 @@ class DlpackNvencVideoRecorder:
         if frames_t.device.type != "cuda":
             raise RuntimeError("video.backend=pynv requires JAX frames on a CUDA device.")
 
-        frames_u8 = (frames_t.clamp(0.0, 1.0) * 255.0).to(torch.uint8)
+        if torch.is_floating_point(frames_t):
+            frames_u8 = (frames_t.clamp(0.0, 1.0) * 255.0).to(torch.uint8)
+        else:
+            frames_u8 = frames_t.to(torch.uint8)
         if self._full_sink is not None:
             self._full_sink.write_frames(_rgb_to_abgr(frames_u8, torch))
 
-        if self._partial_sink is not None:
+        if self._partial_sinks:
             positions_t = torch.from_dlpack(controlled_positions)
             if n is not None:
                 positions_t = positions_t[:n]
-            crops = _crop_partial_torch(frames_u8, positions_t, self.partial_obs_size, torch)
-            self._partial_sink.write_frames(_rgb_to_abgr(crops, torch))
+            if positions_t.ndim == 2:
+                positions_t = positions_t[:, None, :]
+            if positions_t.ndim != 3 or positions_t.shape[-1] != 2:
+                raise ValueError(
+                    "Expected partial-observation positions with shape (T, K, 2), "
+                    f"got {tuple(positions_t.shape)}."
+                )
+            if positions_t.shape[1] < len(self._partial_sinks):
+                raise ValueError(
+                    f"Got {positions_t.shape[1]} partial-observation position streams "
+                    f"for {len(self._partial_sinks)} sinks."
+                )
+            for agent_index, sink in enumerate(self._partial_sinks):
+                crops = _crop_partial_torch(
+                    frames_u8,
+                    positions_t[:, agent_index],
+                    self.partial_obs_size,
+                    torch,
+                )
+                sink.write_frames(_rgb_to_abgr(crops, torch))
 
     def close(self):
-        for sink in (self._full_sink, self._partial_sink):
+        for sink in [self._full_sink, *self._partial_sinks]:
             if sink is not None:
                 sink.close()
         self._full_sink = None
+        self._partial_sinks = []
         self._partial_sink = None
 
     def __enter__(self):

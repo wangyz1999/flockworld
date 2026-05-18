@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import partial
 from pathlib import Path
 
@@ -52,6 +53,45 @@ def _video_warmup_steps(cfg) -> int:
 def _trajectory_enabled(cfg) -> bool:
     trajectory = cfg.get("trajectory", {})
     return bool(trajectory.get("enabled", False))
+
+
+def _collection_enabled(cfg) -> bool:
+    collection = cfg.get("collection", {})
+    return bool(collection.get("enabled", False))
+
+
+def _collection_total_episodes(cfg) -> int:
+    collection = cfg.get("collection", {})
+    return max(0, int(collection.get("total_episodes", collection.get("total_limit", 1))))
+
+
+def _collection_partial_agent_count(cfg, num_agents: int) -> int:
+    collection = cfg.get("collection", {})
+    requested = int(collection.get("partial_agents", 1))
+    return max(0, min(requested, int(num_agents)))
+
+
+def _collection_save_trajectory(cfg) -> bool:
+    collection = cfg.get("collection", {})
+    return bool(collection.get("save_trajectory", True))
+
+
+def _collection_output_root(cfg) -> Path:
+    collection = cfg.get("collection", {})
+    return Path(collection.get("output_root", "outputs"))
+
+
+def _write_collection_metadata(path: str | Path, payload: dict):
+    metadata_path = Path(path)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+
+
+def _write_collection_settings(path: str | Path, cfg):
+    settings_path = Path(path)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(config=cfg, f=settings_path, resolve=True)
 
 
 def _output_paths_for_env(cfg, env_index: int, seed: int):
@@ -172,8 +212,18 @@ def _make_batched_step_fn(jax, step_fn):
 def _make_headless_chunk_fn(jax, jnp, step_fn, render_fn):
     """Jitted function that steps, renders, and uint8-converts chunks for one environment."""
 
-    @partial(jax.jit, static_argnames=("params", "chunk_size", "use_straight_policy"))
-    def _generate_chunk(state, params, uv_grid, chunk_size: int, use_straight_policy: bool):
+    @partial(
+        jax.jit,
+        static_argnames=("params", "chunk_size", "use_straight_policy", "partial_agent_count"),
+    )
+    def _generate_chunk(
+        state,
+        params,
+        uv_grid,
+        chunk_size: int,
+        use_straight_policy: bool,
+        partial_agent_count: int,
+    ):
         def _one_frame(carry, _):
             action = (
                 carry.boids.headings[0]
@@ -183,9 +233,9 @@ def _make_headless_chunk_fn(jax, jnp, step_fn, render_fn):
             next_state, _, _, _ = step_fn(carry, action, params)
             frame_f = render_fn(next_state, params, uv_grid)
             frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-            controlled_pos = next_state.boids.positions[0]
+            partial_positions = next_state.boids.positions[:partial_agent_count]
             trajectory = _trajectory_snapshot_jnp(next_state, jnp)
-            return next_state, (frame_u8, controlled_pos, trajectory)
+            return next_state, (frame_u8, partial_positions, trajectory)
 
         return jax.lax.scan(_one_frame, state, None, length=chunk_size)
 
@@ -195,8 +245,18 @@ def _make_headless_chunk_fn(jax, jnp, step_fn, render_fn):
 def _make_headless_multi_chunk_fn(jax, jnp, step_fn, render_fn):
     """Jitted chunk generator with axes (time, env, ...) for batched environments."""
 
-    @partial(jax.jit, static_argnames=("params", "chunk_size", "use_straight_policy"))
-    def _generate_chunk(states, params, uv_grid, chunk_size: int, use_straight_policy: bool):
+    @partial(
+        jax.jit,
+        static_argnames=("params", "chunk_size", "use_straight_policy", "partial_agent_count"),
+    )
+    def _generate_chunk(
+        states,
+        params,
+        uv_grid,
+        chunk_size: int,
+        use_straight_policy: bool,
+        partial_agent_count: int,
+    ):
         def _one_env(state):
             action = (
                 state.boids.headings[0]
@@ -206,9 +266,9 @@ def _make_headless_multi_chunk_fn(jax, jnp, step_fn, render_fn):
             next_state, _, _, _ = step_fn(state, action, params)
             frame_f = render_fn(next_state, params, uv_grid)
             frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-            controlled_pos = next_state.boids.positions[0]
+            partial_positions = next_state.boids.positions[:partial_agent_count]
             trajectory = _trajectory_snapshot_jnp(next_state, jnp)
-            return next_state, (frame_u8, controlled_pos, trajectory)
+            return next_state, (frame_u8, partial_positions, trajectory)
 
         def _one_frame(carry, _):
             return jax.vmap(_one_env)(carry)
@@ -221,15 +281,15 @@ def _make_headless_multi_chunk_fn(jax, jnp, step_fn, render_fn):
 def _make_batched_step_render_fn(jax, jnp, step_fn, render_fn):
     """Jitted one-frame generator for batched policy actions."""
 
-    @partial(jax.jit, static_argnames=("params",))
-    def _step_render(states, actions, params, uv_grid):
+    @partial(jax.jit, static_argnames=("params", "partial_agent_count"))
+    def _step_render(states, actions, params, uv_grid, partial_agent_count: int):
         def _one_env(state, action):
             next_state, _, _, _ = step_fn(state, action, params)
             frame_f = render_fn(next_state, params, uv_grid)
             frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-            controlled_pos = next_state.boids.positions[0]
+            partial_positions = next_state.boids.positions[:partial_agent_count]
             trajectory = _trajectory_snapshot_jnp(next_state, jnp)
-            return next_state, (frame_u8, controlled_pos, trajectory)
+            return next_state, (frame_u8, partial_positions, trajectory)
 
         return jax.vmap(_one_env)(states, actions)
 

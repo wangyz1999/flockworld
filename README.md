@@ -35,6 +35,7 @@ python main.py video.warmup=120
 python main.py generation.num_envs=8 video.duration=5
 python main.py trajectory.enabled=true
 python main.py video.backend=pynv video.chunk_size=256
+python main.py collection.enabled=true collection.total_episodes=100 generation.num_envs=8 collection.partial_agents=2
 ```
 
 Output videos are written to `output/full_obs.mp4` (entire canvas) and
@@ -43,6 +44,12 @@ headless runs use `generation.*_path_template` and write one full/partial pair
 per environment.
 Set `trajectory.enabled=true` to also save per-frame per-agent state/action
 trajectories as `.npy`.
+
+Structured collection mode writes a timestamped dataset under `outputs/` with
+`settings.yaml`, `metadata.json`, `video_global/00000.mp4`,
+`video_a1/00000.mp4`, additional partial-agent folders up to
+`collection.partial_agents`, and per-episode trajectory files under
+`trajectory/`.
 
 For maximum NVIDIA throughput, `video.backend=pynv` keeps batched JAX frames on
 the GPU and encodes with PyNvVideoCodec/NVENC through DLPack. It requires

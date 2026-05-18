@@ -36,6 +36,23 @@ Trajectory files contain `positions` `(T, N, 2)`, `velocities` `(T, N, 2)`,
 `step_count` `(T,)`. `actions` are applied movement headings in radians; for
 uncontrolled flocking boids this is the heading produced by the boid update.
 
+## `collection`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `collection.enabled` | `false` | If `true`, run structured dataset collection instead of writing the direct `video.*_path` outputs. |
+| `collection.output_root` | `"outputs"` | Parent directory for timestamped collection runs. |
+| `collection.total_episodes` | `1` | Total episode count to collect. Collection uses up to `generation.num_envs` environments at a time and stops exactly at this limit. |
+| `collection.partial_agents` | `1` | Number of first-agent partial-observation streams to save per episode. For example `2` writes `video_a1/00000.mp4` and `video_a2/00000.mp4`. |
+| `collection.save_trajectory` | `true` | If `true`, save one trajectory `.npy` per episode under `trajectory/`. |
+| `collection.timestamp` | `null` | Optional fixed collection folder name. If unset, the folder name uses local time as `YYYYMMDD_HHMMSS`. |
+
+Collection runs create `collection.output_root/<timestamp>/settings.yaml`,
+`metadata.json`, `video_global/`, `video_a1/`, ..., and `trajectory/`. Episode
+files are named `00000.mp4`, `00001.mp4`, and so on. `settings.yaml` stores the
+resolved run settings at startup; `metadata.json` stores the episode records and
+stats such as `total_count`.
+
 ## `canvas`
 
 | Key | Default | Description |
