@@ -15,7 +15,7 @@ trajectory:
 canvas:
   width: 720
   height: 720
-  partial: 128
+  partial: 128            # observation size
 
 boids:
   num_agents: 1500        # JS reference default
@@ -43,15 +43,20 @@ env:
 rendering:
   background_color: [0,0,0] 
   agent_color: [1.0, 1.0, 1.0]
-  aa_blur: 1.0
-  boid_alpha: 0.8
-  color_mode: "speed" # speed = JS HSV speed tint | fixed = use agent_color for every boid
+  aa_blur: 1
+  boid_alpha: 1
+  color_mode: "fixed" # speed = JS HSV speed tint | fixed = use agent_color for every boid
 
 video:
+  backend: "opencv"     # opencv = CPU mp4v writer; pynv = DLPack -> PyNvVideoCodec/NVENC (requires canvas width>=145 for h264)
+  codec: "h264"           # pynv backend codec: h264, hevc, or av1
+  gpu_id: 0               # pynv backend GPU id
+  preset: "p1"            # pynv backend NVENC preset; p1 is fastest, p7 is highest quality
+  bitrate: "20M"          # pynv backend target bitrate
   fps: 30
   duration: 30.0
   warmup: 60           # simulation steps skipped before recording starts
-  chunk_size: 256       # frames generated per JAX batch in headless recording; 1 disables batching
+  chunk_size: 1000       # frames generated per JAX batch in headless recording; 1 disables batching
   full_obs_path: "output/full_obs.mp4"
   partial_obs_path: "output/partial_obs.mp4"
   full_obs_only: false   # skip partial obs video

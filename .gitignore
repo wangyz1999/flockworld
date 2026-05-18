@@ -211,3 +211,7 @@ output/
 
 # Un-ignore our package's env submodule (matched by env/ above)
 !flockworld/env/
+
+.claude
+.codex
+.agents

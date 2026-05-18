@@ -12,38 +12,37 @@ from __future__ import annotations
 
 import sys
 import time
-from functools import partial
-from pathlib import Path
 
 import numpy as np
-from omegaconf import OmegaConf
 from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, SpinnerColumn
 
 from flockworld.runtime import configure_jax_platform
-
-console = Console()
-
-TRAJECTORY_KEYS = (
-    "positions",
-    "velocities",
-    "accelerations",
-    "headings",
-    "actions",
-    "step_count",
+from flockworld.utils import (
+    load_config,
+    _generation_num_envs,
+    _generation_seeds,
+    _video_warmup_steps,
+    _output_paths_for_env,
+    _trajectory_path_for_env,
+    _trajectory_enabled,
+    _video_recorder_cls,
+    _tree_index,
+    _make_headless_warmup_fn,
+    _make_headless_multi_warmup_fn,
+    _make_batched_step_fn,
+    _make_headless_chunk_fn,
+    _make_headless_multi_chunk_fn,
+    _make_batched_step_render_fn,
+    _trajectory_snapshot_np,
+    _append_trajectory_chunk,
+    _append_multi_trajectory_chunk,
+    _append_multi_trajectory_frame,
+    _record_multi_chunk,
+    _save_trajectory,
 )
 
-
-def load_config(cli_args: list[str] | None = None):
-    """Load ``config/default.yaml`` and merge CLI overrides."""
-    base_path = Path(__file__).resolve().parent / "config" / "default.yaml"
-    base_cfg = OmegaConf.load(base_path)
-    if cli_args:
-        cli_cfg = OmegaConf.from_dotlist(cli_args)
-        cfg = OmegaConf.merge(base_cfg, cli_cfg)
-    else:
-        cfg = base_cfg
-    return cfg
+console = Console()
 
 
 def _warmup(state, params, uv_grid, jnp, step_fn, render_fn):
@@ -146,13 +145,16 @@ def _run_headless(
                         state, params, uv_grid, n, use_straight_policy,
                     )
                     frames, controlled_positions, trajectory = chunk_outputs
-                    frames_np = np.asarray(frames)
-                    positions_np = np.asarray(controlled_positions)
                     if save_trajectory:
                         _append_trajectory_chunk(trajectory_chunks, trajectory, n)
 
-                    for frame_u8, controlled_pos in zip(frames_np[:n], positions_np[:n]):
-                        recorder.record(frame_u8, controlled_pos)
+                    if hasattr(recorder, "record_jax_chunk"):
+                        recorder.record_jax_chunk(frames, controlled_positions, n)
+                    else:
+                        frames_np = np.asarray(frames)
+                        positions_np = np.asarray(controlled_positions)
+                        for frame_u8, controlled_pos in zip(frames_np[:n], positions_np[:n]):
+                            recorder.record(frame_u8, controlled_pos)
 
                     recorded += n
                     progress.advance(task, n)
@@ -259,11 +261,9 @@ def _run_headless_multi(
                         states, params, uv_grid, n, use_straight_policy,
                     )
                     frames, controlled_positions, trajectory = chunk_outputs
-                    frames_np = np.asarray(frames[:n])
-                    positions_np = np.asarray(controlled_positions[:n])
                     if save_trajectory:
                         _append_multi_trajectory_chunk(trajectory_chunks, trajectory, n)
-                    _record_multi_chunk(recorders, frames_np, positions_np)
+                    _record_multi_chunk(recorders, frames, controlled_positions, n)
                     recorded += n
                     progress.advance(task, n * num_envs)
             else:
@@ -403,276 +403,6 @@ def _run_headless_multi_warmup(
     return states, policy_states
 
 
-def _make_headless_warmup_fn(jax, jnp, step_fn):
-    """Build a jitted no-render warmup function for one environment."""
-
-    @partial(jax.jit, static_argnames=("params", "warmup_steps", "use_straight_policy"))
-    def _warmup_scan(state, params, warmup_steps: int, use_straight_policy: bool):
-        def _one_step(carry, _):
-            action = (
-                carry.boids.headings[0]
-                if use_straight_policy
-                else jnp.float32(0.0)
-            )
-            next_state, _, _, _ = step_fn(carry, action, params)
-            return next_state, None
-
-        state, _ = jax.lax.scan(_one_step, state, None, length=warmup_steps)
-        return state
-
-    return _warmup_scan
-
-
-def _make_headless_multi_warmup_fn(jax, jnp, step_fn):
-    """Build a jitted no-render warmup function for batched environments."""
-
-    @partial(jax.jit, static_argnames=("params", "warmup_steps", "use_straight_policy"))
-    def _warmup_scan(states, params, warmup_steps: int, use_straight_policy: bool):
-        def _one_env(state):
-            action = (
-                state.boids.headings[0]
-                if use_straight_policy
-                else jnp.float32(0.0)
-            )
-            next_state, _, _, _ = step_fn(state, action, params)
-            return next_state
-
-        def _one_step(carry, _):
-            return jax.vmap(_one_env)(carry), None
-
-        states, _ = jax.lax.scan(_one_step, states, None, length=warmup_steps)
-        return states
-
-    return _warmup_scan
-
-
-def _make_batched_step_fn(jax, step_fn):
-    """Build a jitted batched one-step function without rendering."""
-
-    @partial(jax.jit, static_argnames=("params",))
-    def _step(states, actions, params):
-        def _one_env(state, action):
-            next_state, _, _, _ = step_fn(state, action, params)
-            return next_state
-
-        return jax.vmap(_one_env)(states, actions)
-
-    return _step
-
-
-def _make_headless_chunk_fn(jax, jnp, step_fn, render_fn):
-    """Build a jitted function that steps, renders, and uint8-converts chunks."""
-
-    @partial(jax.jit, static_argnames=("params", "chunk_size", "use_straight_policy"))
-    def _generate_chunk(state, params, uv_grid, chunk_size: int, use_straight_policy: bool):
-        def _one_frame(carry, _):
-            action = (
-                carry.boids.headings[0]
-                if use_straight_policy
-                else jnp.float32(0.0)
-            )
-            next_state, _, _, _ = step_fn(carry, action, params)
-            frame_f = render_fn(next_state, params, uv_grid)
-            frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-            controlled_pos = next_state.boids.positions[0]
-            trajectory = _trajectory_snapshot_jnp(next_state, jnp)
-            return next_state, (frame_u8, controlled_pos, trajectory)
-
-        return jax.lax.scan(_one_frame, state, None, length=chunk_size)
-
-    return _generate_chunk
-
-
-def _make_headless_multi_chunk_fn(jax, jnp, step_fn, render_fn):
-    """Build a jitted chunk generator with axes (time, env, ...)."""
-
-    @partial(jax.jit, static_argnames=("params", "chunk_size", "use_straight_policy"))
-    def _generate_chunk(states, params, uv_grid, chunk_size: int, use_straight_policy: bool):
-        def _one_env(state):
-            action = (
-                state.boids.headings[0]
-                if use_straight_policy
-                else jnp.float32(0.0)
-            )
-            next_state, _, _, _ = step_fn(state, action, params)
-            frame_f = render_fn(next_state, params, uv_grid)
-            frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-            controlled_pos = next_state.boids.positions[0]
-            trajectory = _trajectory_snapshot_jnp(next_state, jnp)
-            return next_state, (frame_u8, controlled_pos, trajectory)
-
-        def _one_frame(carry, _):
-            return jax.vmap(_one_env)(carry)
-
-        return jax.lax.scan(_one_frame, states, None, length=chunk_size)
-
-    return _generate_chunk
-
-
-def _make_batched_step_render_fn(jax, jnp, step_fn, render_fn):
-    """Build a jitted one-frame generator for batched policy actions."""
-
-    @partial(jax.jit, static_argnames=("params",))
-    def _step_render(states, actions, params, uv_grid):
-        def _one_env(state, action):
-            next_state, _, _, _ = step_fn(state, action, params)
-            frame_f = render_fn(next_state, params, uv_grid)
-            frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-            controlled_pos = next_state.boids.positions[0]
-            trajectory = _trajectory_snapshot_jnp(next_state, jnp)
-            return next_state, (frame_u8, controlled_pos, trajectory)
-
-        return jax.vmap(_one_env)(states, actions)
-
-    return _step_render
-
-
-def _tree_index(jax, tree, index: int):
-    return jax.tree_util.tree_map(lambda x: x[index], tree)
-
-
-def _generation_num_envs(cfg) -> int:
-    generation = cfg.get("generation", {})
-    return max(1, int(generation.get("num_envs", 1)))
-
-
-def _generation_seeds(cfg) -> list[int]:
-    generation = cfg.get("generation", {})
-    num_envs = _generation_num_envs(cfg)
-    stride = int(generation.get("seed_stride", 1))
-    base_seed = int(cfg.seed)
-    return [base_seed + i * stride for i in range(num_envs)]
-
-
-def _video_warmup_steps(cfg) -> int:
-    return max(0, int(cfg.video.get("warmup", 0)))
-
-
-def _output_paths_for_env(cfg, env_index: int, seed: int):
-    if _generation_num_envs(cfg) == 1:
-        full_path = None if cfg.video.partial_only else cfg.video.full_obs_path
-        partial_path = None if cfg.video.full_obs_only else cfg.video.partial_obs_path
-        return full_path, partial_path
-
-    generation = cfg.get("generation", {})
-    values = {"env": env_index, "seed": seed}
-    full_template = generation.get(
-        "full_obs_path_template",
-        "output/env_{env:04d}_seed_{seed}_full_obs.mp4",
-    )
-    partial_template = generation.get(
-        "partial_obs_path_template",
-        "output/env_{env:04d}_seed_{seed}_partial_obs.mp4",
-    )
-    full_path = None if cfg.video.partial_only else full_template.format(**values)
-    partial_path = None if cfg.video.full_obs_only else partial_template.format(**values)
-    return full_path, partial_path
-
-
-def _record_multi_chunk(recorders, frames_np: np.ndarray, positions_np: np.ndarray):
-    for env_index, recorder in enumerate(recorders):
-        for frame_u8, controlled_pos in zip(frames_np[:, env_index], positions_np[:, env_index]):
-            recorder.record(frame_u8, controlled_pos)
-
-
-def _trajectory_enabled(cfg) -> bool:
-    trajectory = cfg.get("trajectory", {})
-    return bool(trajectory.get("enabled", False))
-
-
-def _trajectory_snapshot_jnp(state, jnp):
-    return {
-        "positions": state.boids.positions,
-        "velocities": state.boids.velocities,
-        "accelerations": state.boids.accelerations,
-        "headings": state.boids.headings,
-        "actions": state.boids.headings,
-        "step_count": jnp.asarray(state.step_count, dtype=jnp.int32),
-    }
-
-
-def _trajectory_snapshot_np(state):
-    return {
-        "positions": np.asarray(state.boids.positions),
-        "velocities": np.asarray(state.boids.velocities),
-        "accelerations": np.asarray(state.boids.accelerations),
-        "headings": np.asarray(state.boids.headings),
-        "actions": np.asarray(state.boids.headings),
-        "step_count": np.asarray(state.step_count, dtype=np.int32),
-    }
-
-
-def _append_trajectory_chunk(trajectory_chunks: list[dict], trajectory, n: int):
-    trajectory_np = {key: np.asarray(trajectory[key][:n]) for key in TRAJECTORY_KEYS}
-    trajectory_chunks.append(trajectory_np)
-
-
-def _append_multi_trajectory_chunk(trajectory_chunks: list[list[dict]], trajectory, n: int):
-    trajectory_np = {key: np.asarray(trajectory[key][:n]) for key in TRAJECTORY_KEYS}
-    for env_index, env_chunks in enumerate(trajectory_chunks):
-        env_chunks.append({key: trajectory_np[key][:, env_index] for key in TRAJECTORY_KEYS})
-
-
-def _append_multi_trajectory_frame(trajectory_chunks: list[list[dict]], trajectory):
-    trajectory_np = {key: np.asarray(trajectory[key]) for key in TRAJECTORY_KEYS}
-    for env_index, env_chunks in enumerate(trajectory_chunks):
-        env_chunks.append({key: trajectory_np[key][env_index] for key in TRAJECTORY_KEYS})
-
-
-def _trajectory_path_for_env(cfg, env_index: int, seed: int) -> str:
-    trajectory = cfg.get("trajectory", {})
-    if _generation_num_envs(cfg) == 1:
-        return trajectory.get("path", "output/trajectory.npy")
-
-    template = trajectory.get(
-        "path_template",
-        "output/env_{env:04d}_seed_{seed}_trajectory.npy",
-    )
-    return template.format(env=env_index, seed=seed)
-
-
-def _save_trajectory(cfg, path: str, seed: int, trajectory_chunks: list[dict]):
-    out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if trajectory_chunks:
-        arrays = {
-            key: np.concatenate(
-                [_with_time_axis(key, chunk[key]) for chunk in trajectory_chunks],
-                axis=0,
-            )
-            for key in TRAJECTORY_KEYS
-        }
-    else:
-        arrays = {key: np.asarray([]) for key in TRAJECTORY_KEYS}
-
-    payload = {
-        **arrays,
-        "seed": int(seed),
-        "fps": int(cfg.video.fps),
-        "warmup": _video_warmup_steps(cfg),
-        "canvas_size": np.asarray([int(cfg.canvas.width), int(cfg.canvas.height)]),
-        "partial_obs_size": int(cfg.canvas.partial),
-    }
-    np.save(out_path, payload, allow_pickle=True)
-
-
-def _with_time_axis(key: str, value: np.ndarray) -> np.ndarray:
-    value = np.asarray(value)
-    expected_ndim = {
-        "positions": 3,
-        "velocities": 3,
-        "accelerations": 3,
-        "headings": 2,
-        "actions": 2,
-        "step_count": 1,
-    }[key]
-    if value.ndim == expected_ndim:
-        return value
-    if value.ndim == expected_ndim - 1:
-        return value[None]
-    raise ValueError(f"Unexpected trajectory shape for {key}: {value.shape}")
-
-
 def main():
     cfg = load_config(sys.argv[1:])
     configure_jax_platform(cfg.get("device", "auto"))
@@ -683,7 +413,7 @@ def main():
     from flockworld.env.flock_env import EnvParams, env_config_from_omega, render, reset, step
     from flockworld.policies import get_policy, init_policy
     from flockworld.rendering.renderer import build_uv_grid
-    from flockworld.video.recorder import VideoRecorder
+    from flockworld.video.recorder import DlpackNvencVideoRecorder, VideoRecorder
 
     ec = env_config_from_omega(cfg)
     params = EnvParams(ec)
@@ -720,10 +450,19 @@ def main():
             step, render,
         )
     else:
+        recorder_cls = _video_recorder_cls(cfg, VideoRecorder, DlpackNvencVideoRecorder)
+        if str(cfg.video.get("backend", "opencv")).lower() in {"pynv", "dlpack", "nvenc"}:
+            chunk_size = max(1, int(cfg.video.get("chunk_size", 1)))
+            can_chunk = (not ec.controlled_agent) or cfg.env.agent_policy == "straight"
+            if chunk_size <= 1 or not can_chunk:
+                raise ValueError(
+                    "video.backend=pynv requires video.chunk_size > 1 and an uncontrolled "
+                    "or straight controlled-agent policy so frames stay batched on GPU."
+                )
         if num_envs == 1:
             _run_headless(
                 cfg, ec, params, uv_grid, state, policy_fn, policy_state,
-                step, render, VideoRecorder, jax, jnp,
+                step, render, recorder_cls, jax, jnp,
             )
         else:
             seeds = _generation_seeds(cfg)
@@ -735,7 +474,7 @@ def main():
             ]
             _run_headless_multi(
                 cfg, ec, params, uv_grid, states, policy_fn, policy_states, seeds,
-                step, render, VideoRecorder, jax, jnp,
+                step, render, recorder_cls, jax, jnp,
             )
 
 

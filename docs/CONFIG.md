@@ -96,6 +96,11 @@ python main.py rendering.color_mode=speed
 
 | Key | Default | Description |
 | --- | --- | --- |
+| `video.backend` | `"opencv"` | Video writer backend. `opencv` keeps the existing CPU `mp4v` path. `pynv` uses DLPack to hand batched JAX CUDA frames to PyNvVideoCodec/NVENC; it requires `video.chunk_size > 1`, an NVIDIA GPU, `torch`, `PyNvVideoCodec`, and `ffmpeg` for `.mp4` muxing. |
+| `video.codec` | `"h264"` | `pynv` backend codec: `h264`, `hevc`, or `av1`, subject to GPU support. |
+| `video.gpu_id` | `0` | `pynv` backend GPU id. |
+| `video.preset` | `"p1"` | `pynv` backend NVENC preset. `p1` favors throughput; higher values favor quality. |
+| `video.bitrate` | `"20M"` | `pynv` backend target bitrate. |
 | `video.fps` | `30` | Output video frame rate. |
 | `video.duration` | `30.0` | Requested recording duration in seconds. |
 | `video.warmup` | `60` | Number of simulation steps to run before recording video or trajectory frames. Warmup does not count toward `video.duration`; the engine steps `video.warmup + fps * duration` times unless clipped by `env.max_steps`. |

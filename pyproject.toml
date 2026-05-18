@@ -10,7 +10,9 @@ dependencies = [
     "numpy>=1.26.0",
     "omegaconf>=2.3.0",
     "opencv-python>=4.13.0.92",
+    "pynvvideocodec>=2.0.2",
     "rich>=14.3.3",
+    "torchvision>=0.27.0",
 ]
 
 [tool.setuptools.packages.find]
