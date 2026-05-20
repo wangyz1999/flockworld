@@ -18,8 +18,8 @@ TRAJECTORY_KEYS = (
 
 
 def load_config(cli_args: list[str] | None = None):
-    """Load ``config/default.yaml`` and merge CLI overrides."""
-    base_path = Path(__file__).resolve().parent.parent / "config" / "default.yaml"
+    """Load ``config/data_recording.yaml`` and merge CLI overrides."""
+    base_path = Path(__file__).resolve().parent.parent / "config" / "data_recording.yaml"
     base_cfg = OmegaConf.load(base_path)
     if cli_args:
         cli_cfg = OmegaConf.from_dotlist(cli_args)
@@ -118,11 +118,11 @@ def _output_paths_for_env(cfg, env_index: int, seed: int):
 def _trajectory_path_for_env(cfg, env_index: int, seed: int) -> str:
     trajectory = cfg.get("trajectory", {})
     if _generation_num_envs(cfg) == 1:
-        return trajectory.get("path", "output/trajectory.npy")
+        return trajectory.get("path", "output/trajectory.parquet")
 
     template = trajectory.get(
         "path_template",
-        "output/env_{env:04d}_seed_{seed}_trajectory.npy",
+        "output/env_{env:04d}_seed_{seed}_trajectory.parquet",
     )
     return template.format(env=env_index, seed=seed)
 
@@ -352,8 +352,18 @@ def _record_multi_chunk(recorders, frames, positions, n: int):
             recorder.record(frame_u8, controlled_pos)
 
 
-def _save_trajectory(cfg, path: str, seed: int, trajectory_chunks: list[dict]):
+def _save_trajectory(cfg, path: str, seed: int, trajectory_chunks: list[dict]) -> str:
+    try:
+        import polars as pl
+    except ImportError as exc:
+        raise ImportError(
+            "Saving trajectories as Parquet requires polars. "
+            "Install project dependencies with `uv sync` or install polars in the active environment."
+        ) from exc
+
     out_path = Path(path)
+    if out_path.suffix.lower() != ".parquet":
+        out_path = out_path.with_suffix(".parquet")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if trajectory_chunks:
         arrays = {
@@ -366,15 +376,67 @@ def _save_trajectory(cfg, path: str, seed: int, trajectory_chunks: list[dict]):
     else:
         arrays = {key: np.asarray([]) for key in TRAJECTORY_KEYS}
 
-    payload = {
-        **arrays,
-        "seed": int(seed),
-        "fps": int(cfg.video.fps),
-        "warmup": _video_warmup_steps(cfg),
-        "canvas_size": np.asarray([int(cfg.canvas.width), int(cfg.canvas.height)]),
-        "partial_obs_size": int(cfg.canvas.partial),
+    df = _trajectory_dataframe(pl, cfg, int(seed), arrays)
+    df.write_parquet(out_path, compression="zstd")
+    return str(out_path)
+
+
+def _trajectory_dataframe(pl, cfg, seed: int, arrays: dict[str, np.ndarray]):
+    positions = np.asarray(arrays["positions"])
+    if positions.size == 0:
+        row_count = 0
+        num_agents = int(cfg.boids.num_agents)
+    else:
+        if positions.ndim != 3 or positions.shape[-1] != 2:
+            raise ValueError(f"Expected positions with shape (T, N, 2), got {positions.shape}.")
+        row_count = int(positions.shape[0] * positions.shape[1])
+        num_agents = int(positions.shape[1])
+
+    def _flat_pair(key: str, axis: int) -> np.ndarray:
+        value = np.asarray(arrays[key])
+        if row_count == 0:
+            return np.asarray([], dtype=np.float32)
+        return value[..., axis].reshape(-1).astype(np.float32, copy=False)
+
+    def _flat_scalar(key: str, dtype) -> np.ndarray:
+        value = np.asarray(arrays[key])
+        if row_count == 0:
+            return np.asarray([], dtype=dtype)
+        return value.reshape(-1).astype(dtype, copy=False)
+
+    if row_count == 0:
+        frame = np.asarray([], dtype=np.int32)
+        agent = np.asarray([], dtype=np.int32)
+        step_count = np.asarray([], dtype=np.int32)
+    else:
+        frames = int(positions.shape[0])
+        frame = np.repeat(np.arange(frames, dtype=np.int32), num_agents)
+        agent = np.tile(np.arange(num_agents, dtype=np.int32), frames)
+        step_count = np.repeat(
+            np.asarray(arrays["step_count"], dtype=np.int32).reshape(-1),
+            num_agents,
+        )
+
+    data = {
+        "seed": np.full(row_count, seed, dtype=np.int64),
+        "fps": np.full(row_count, int(cfg.video.fps), dtype=np.int32),
+        "warmup": np.full(row_count, _video_warmup_steps(cfg), dtype=np.int32),
+        "canvas_width": np.full(row_count, int(cfg.canvas.width), dtype=np.int32),
+        "canvas_height": np.full(row_count, int(cfg.canvas.height), dtype=np.int32),
+        "partial_obs_size": np.full(row_count, int(cfg.canvas.partial), dtype=np.int32),
+        "frame": frame,
+        "agent": agent,
+        "step_count": step_count,
+        "position_x": _flat_pair("positions", 0),
+        "position_y": _flat_pair("positions", 1),
+        "velocity_x": _flat_pair("velocities", 0),
+        "velocity_y": _flat_pair("velocities", 1),
+        "acceleration_x": _flat_pair("accelerations", 0),
+        "acceleration_y": _flat_pair("accelerations", 1),
+        "heading": _flat_scalar("headings", np.float32),
+        "action": _flat_scalar("actions", np.float32),
     }
-    np.save(out_path, payload, allow_pickle=True)
+    return pl.DataFrame(data)
 
 
 def _with_time_axis(key: str, value: np.ndarray) -> np.ndarray:

@@ -23,7 +23,7 @@ class FlockEnv(gym.Env):
         if env_config is None and cfg is None:
             raise ValueError(
                 "FlockEnv requires either cfg (OmegaConf) or env_config (EnvConfig); "
-                "all fields are defined in config/default.yaml.",
+                "all fields are defined in config/data_recording.yaml.",
             )
 
         device = env_config.device if env_config is not None else cfg.device

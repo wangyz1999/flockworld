@@ -24,7 +24,7 @@ from omegaconf import OmegaConf
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = REPO_ROOT / "config" / "default.yaml"
+DEFAULT_CONFIG = REPO_ROOT / "config" / "data_recording.yaml"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "output" / "benchmarks"
 
 if str(REPO_ROOT) not in sys.path:

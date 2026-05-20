@@ -1,10 +1,10 @@
 # Configuration Reference
 
-FlockWorld loads `config/default.yaml` and applies CLI overrides using OmegaConf dot-list syntax:
+FlockWorld loads `config/data_recording.yaml` and applies CLI overrides using OmegaConf dot-list syntax:
 
 ```bash
-python main.py boids.num_agents=100 canvas.width=512 canvas.height=512
-python main.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
+python data_recording.py boids.num_agents=100 canvas.width=512 canvas.height=512
+python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
 ```
 
 ## Root
@@ -27,13 +27,13 @@ python main.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `trajectory.enabled` | `false` | If `true`, save a `.npy` object dict containing per-frame per-agent trajectories after each simulated/rendered frame. |
-| `trajectory.path` | `"output/trajectory.npy"` | Single-env trajectory output path. |
-| `trajectory.path_template` | `"output/env_{env:04d}_seed_{seed}_trajectory.npy"` | Multi-env trajectory output template. Available fields: `{env}`, `{seed}`. |
+| `trajectory.enabled` | `false` | If `true`, save a `.parquet` table containing per-frame per-agent trajectories after each simulated/rendered frame. |
+| `trajectory.path` | `"output/trajectory.parquet"` | Single-env trajectory output path. |
+| `trajectory.path_template` | `"output/env_{env:04d}_seed_{seed}_trajectory.parquet"` | Multi-env trajectory output template. Available fields: `{env}`, `{seed}`. |
 
-Trajectory files contain `positions` `(T, N, 2)`, `velocities` `(T, N, 2)`,
-`accelerations` `(T, N, 2)`, `headings` `(T, N)`, `actions` `(T, N)`, and
-`step_count` `(T,)`. `actions` are applied movement headings in radians; for
+Trajectory files contain one row per `(frame, agent)` sample with columns for
+`position_x/y`, `velocity_x/y`, `acceleration_x/y`, `heading`, `action`, and
+`step_count`. `actions` are applied movement headings in radians; for
 uncontrolled flocking boids this is the heading produced by the boid update.
 
 ## `collection`
@@ -44,7 +44,7 @@ uncontrolled flocking boids this is the heading produced by the boid update.
 | `collection.output_root` | `"outputs"` | Parent directory for timestamped collection runs. |
 | `collection.total_episodes` | `1` | Total episode count to collect. Collection uses up to `generation.num_envs` environments at a time and stops exactly at this limit. |
 | `collection.partial_agents` | `1` | Number of first-agent partial-observation streams to save per episode. For example `2` writes `video_a1/00000.mp4` and `video_a2/00000.mp4`. |
-| `collection.save_trajectory` | `true` | If `true`, save one trajectory `.npy` per episode under `trajectory/`. |
+| `collection.save_trajectory` | `true` | If `true`, save one trajectory `.parquet` per episode under `trajectory/`. |
 | `collection.timestamp` | `null` | Optional fixed collection folder name. If unset, the folder name uses local time as `YYYYMMDD_HHMMSS`. |
 
 Collection runs create `collection.output_root/<timestamp>/settings.yaml`,
@@ -104,9 +104,9 @@ Color values are normalized RGB triples in `[0.0, 1.0]`.
 Examples:
 
 ```bash
-python main.py rendering.color_mode=fixed rendering.agent_color=[1.0,1.0,1.0]
-python main.py rendering.color_mode=fixed rendering.background_color=[0.0,0.0,0.0] rendering.agent_color=[0.2,0.8,1.0]
-python main.py rendering.color_mode=speed
+python data_recording.py rendering.color_mode=fixed rendering.agent_color=[1.0,1.0,1.0]
+python data_recording.py rendering.color_mode=fixed rendering.background_color=[0.0,0.0,0.0] rendering.agent_color=[0.2,0.8,1.0]
+python data_recording.py rendering.color_mode=speed
 ```
 
 ## `video`

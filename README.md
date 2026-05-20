@@ -21,21 +21,21 @@ automatically use CUDA 12.
 Record a 30-second video with default settings:
 
 ```bash
-python main.py
+python data_recording.py
 ```
 
 Override any parameter via the CLI (OmegaConf dot-list syntax):
 
 ```bash
-python main.py boids.num_agents=100 canvas.width=512 canvas.height=512
-python main.py video.duration=5 video.fps=60 seed=123
-python main.py device=cpu
-python main.py video.chunk_size=64
-python main.py video.warmup=120
-python main.py generation.num_envs=8 video.duration=5
-python main.py trajectory.enabled=true
-python main.py video.backend=pynv video.chunk_size=256
-python main.py collection.enabled=true collection.total_episodes=100 generation.num_envs=8 collection.partial_agents=2
+python data_recording.py boids.num_agents=100 canvas.width=512 canvas.height=512
+python data_recording.py video.duration=5 video.fps=60 seed=123
+python data_recording.py device=cpu
+python data_recording.py video.chunk_size=64
+python data_recording.py video.warmup=120
+python data_recording.py generation.num_envs=8 video.duration=5
+python data_recording.py trajectory.enabled=true
+python data_recording.py video.backend=pynv video.chunk_size=256
+python data_recording.py collection.enabled=true collection.total_episodes=100 generation.num_envs=8 collection.partial_agents=2
 ```
 
 Output videos are written to `output/full_obs.mp4` (entire canvas) and
@@ -43,7 +43,7 @@ Output videos are written to `output/full_obs.mp4` (entire canvas) and
 headless runs use `generation.*_path_template` and write one full/partial pair
 per environment.
 Set `trajectory.enabled=true` to also save per-frame per-agent state/action
-trajectories as `.npy`.
+trajectories as `.parquet`.
 
 Structured collection mode writes a timestamped dataset under `outputs/` with
 `settings.yaml`, `metadata.json`, `video_global/00000.mp4`,
@@ -64,7 +64,7 @@ from omegaconf import OmegaConf
 
 from flockworld.env.gym_wrapper import FlockEnv
 
-cfg = OmegaConf.load("config/default.yaml")
+cfg = OmegaConf.load("config/data_recording.yaml")
 cfg.canvas.width = 256
 cfg.canvas.height = 256
 cfg.boids.num_agents = 20
@@ -85,12 +85,12 @@ for _ in range(100):
 
 ## Configuration
 
-All defaults live in `config/default.yaml`. See the full argument and config reference in [docs/CONFIG.md](/home/wangy/wsl_projects/flockworld/docs/CONFIG.md).
+All defaults live in `config/data_recording.yaml`. See the full argument and config reference in [docs/CONFIG.md](/home/wangy/wsl_projects/flockworld/docs/CONFIG.md).
 
 For a fixed color theme instead of JS speed-hue tinting:
 
 ```bash
-python main.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
+python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
 ```
 
 ## Render benchmark
@@ -122,8 +122,8 @@ flockworld/
   video/
     recorder.py       Full-obs & partial-obs video writer
 config/
-  default.yaml        All configurable defaults
-main.py               CLI entry point
+  data_recording.yaml Data recording defaults
+data_recording.py     CLI entry point
 ```
 
 ## Extensibility

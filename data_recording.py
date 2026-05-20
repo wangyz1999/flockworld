@@ -2,10 +2,10 @@
 
 Usage
 -----
-    python main.py                              # headless video recording
-    python main.py env.render=true              # live window, no video
-    python main.py boids.num_agents=100         # override via CLI
-    python main.py video.duration=5 seed=123    # multiple overrides
+    python data_recording.py                              # headless video recording
+    python data_recording.py env.render=true              # live window, no video
+    python data_recording.py boids.num_agents=100         # override via CLI
+    python data_recording.py video.duration=5 seed=123    # multiple overrides
 """
 
 from __future__ import annotations
@@ -193,8 +193,7 @@ def _run_headless(
     saved = [p for p in (full_path, partial_path) if p is not None]
     if save_trajectory:
         trajectory_path = _trajectory_path_for_env(cfg, env_index=0, seed=int(cfg.seed))
-        _save_trajectory(cfg, trajectory_path, int(cfg.seed), trajectory_chunks)
-        saved.append(trajectory_path)
+        saved.append(_save_trajectory(cfg, trajectory_path, int(cfg.seed), trajectory_chunks))
     console.print(f"[green]Done.[/green] Videos saved to: {', '.join(saved)}")
 
 
@@ -312,8 +311,9 @@ def _run_headless_multi(
     if save_trajectory:
         for env_index, seed in enumerate(seeds):
             trajectory_path = _trajectory_path_for_env(cfg, env_index, seed)
-            _save_trajectory(cfg, trajectory_path, seed, trajectory_chunks[env_index])
-            saved_paths.append(trajectory_path)
+            saved_paths.append(
+                _save_trajectory(cfg, trajectory_path, seed, trajectory_chunks[env_index])
+            )
 
     console.print(f"[green]Done.[/green] Videos saved to: {', '.join(saved_paths)}")
 
@@ -572,7 +572,7 @@ def _new_collection_dir(cfg) -> Path:
     timestamp = collection.get("timestamp")
     if timestamp is None:
         timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    output_dir = _collection_output_root(cfg) / str(timestamp)
+    output_dir = _collection_output_root(cfg) / "recording" / str(timestamp)
     if not output_dir.exists():
         return output_dir
 
@@ -600,7 +600,7 @@ def _collection_paths_for_episode(cfg, output_dir: Path, episode_index: int, par
             output_dir / f"video_a{agent_index + 1}" / filename
             for agent_index in range(partial_agent_count)
         ]
-    trajectory_path = output_dir / "trajectory" / f"{episode_index:05d}.npy"
+    trajectory_path = output_dir / "trajectory" / f"{episode_index:05d}.parquet"
     return full_path, partial_paths, trajectory_path
 
 
