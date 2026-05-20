@@ -376,67 +376,89 @@ def _save_trajectory(cfg, path: str, seed: int, trajectory_chunks: list[dict]) -
     else:
         arrays = {key: np.asarray([]) for key in TRAJECTORY_KEYS}
 
-    df = _trajectory_dataframe(pl, cfg, int(seed), arrays)
-    df.write_parquet(out_path, compression="zstd")
+    df = _trajectory_dataframe(pl, cfg, arrays)
+    df.write_parquet(
+        out_path,
+        compression="zstd",
+        metadata=_trajectory_metadata(cfg, int(seed), arrays),
+    )
     return str(out_path)
 
 
-def _trajectory_dataframe(pl, cfg, seed: int, arrays: dict[str, np.ndarray]):
+def _trajectory_dataframe(pl, cfg, arrays: dict[str, np.ndarray]):
     positions = np.asarray(arrays["positions"])
     if positions.size == 0:
-        row_count = 0
+        frame_count = 0
         num_agents = int(cfg.boids.num_agents)
     else:
         if positions.ndim != 3 or positions.shape[-1] != 2:
             raise ValueError(f"Expected positions with shape (T, N, 2), got {positions.shape}.")
-        row_count = int(positions.shape[0] * positions.shape[1])
+        frame_count = int(positions.shape[0])
         num_agents = int(positions.shape[1])
 
-    def _flat_pair(key: str, axis: int) -> np.ndarray:
+    def _agent_pair(key: str, agent_index: int, axis: int) -> np.ndarray:
         value = np.asarray(arrays[key])
-        if row_count == 0:
+        if frame_count == 0:
             return np.asarray([], dtype=np.float32)
-        return value[..., axis].reshape(-1).astype(np.float32, copy=False)
+        return value[:, agent_index, axis].astype(np.float32, copy=False)
 
-    def _flat_scalar(key: str, dtype) -> np.ndarray:
+    def _agent_scalar(key: str, agent_index: int, dtype) -> np.ndarray:
         value = np.asarray(arrays[key])
-        if row_count == 0:
+        if frame_count == 0:
             return np.asarray([], dtype=dtype)
-        return value.reshape(-1).astype(dtype, copy=False)
+        return value[:, agent_index].astype(dtype, copy=False)
 
-    if row_count == 0:
+    if frame_count == 0:
         frame = np.asarray([], dtype=np.int32)
-        agent = np.asarray([], dtype=np.int32)
         step_count = np.asarray([], dtype=np.int32)
     else:
-        frames = int(positions.shape[0])
-        frame = np.repeat(np.arange(frames, dtype=np.int32), num_agents)
-        agent = np.tile(np.arange(num_agents, dtype=np.int32), frames)
-        step_count = np.repeat(
-            np.asarray(arrays["step_count"], dtype=np.int32).reshape(-1),
-            num_agents,
-        )
+        frame = np.arange(frame_count, dtype=np.int32)
+        step_count = np.asarray(arrays["step_count"], dtype=np.int32).reshape(-1)
+        if step_count.shape[0] != frame_count:
+            raise ValueError(
+                f"Expected step_count with {frame_count} frames, got {step_count.shape[0]}."
+            )
 
     data = {
-        "seed": np.full(row_count, seed, dtype=np.int64),
-        "fps": np.full(row_count, int(cfg.video.fps), dtype=np.int32),
-        "warmup": np.full(row_count, _video_warmup_steps(cfg), dtype=np.int32),
-        "canvas_width": np.full(row_count, int(cfg.canvas.width), dtype=np.int32),
-        "canvas_height": np.full(row_count, int(cfg.canvas.height), dtype=np.int32),
-        "partial_obs_size": np.full(row_count, int(cfg.canvas.partial), dtype=np.int32),
         "frame": frame,
-        "agent": agent,
         "step_count": step_count,
-        "position_x": _flat_pair("positions", 0),
-        "position_y": _flat_pair("positions", 1),
-        "velocity_x": _flat_pair("velocities", 0),
-        "velocity_y": _flat_pair("velocities", 1),
-        "acceleration_x": _flat_pair("accelerations", 0),
-        "acceleration_y": _flat_pair("accelerations", 1),
-        "heading": _flat_scalar("headings", np.float32),
-        "action": _flat_scalar("actions", np.float32),
+        "step_norm": (step_count - _video_warmup_steps(cfg)).astype(np.int32, copy=False),
     }
+    canvas_w = float(cfg.canvas.width)
+    canvas_h = float(cfg.canvas.height)
+    for agent_index in range(num_agents):
+        prefix = f"a{agent_index + 1}"
+        pos_x = _agent_pair("positions", agent_index, 0)
+        pos_y = _agent_pair("positions", agent_index, 1)
+        data[f"{prefix}_pos_x"] = pos_x
+        data[f"{prefix}_pos_y"] = pos_y
+        data[f"{prefix}_pos_norm_x"] = pos_x / canvas_w
+        data[f"{prefix}_pos_norm_y"] = pos_y / canvas_h
+        data[f"{prefix}_vel_x"] = _agent_pair("velocities", agent_index, 0)
+        data[f"{prefix}_vel_y"] = _agent_pair("velocities", agent_index, 1)
+        data[f"{prefix}_acc_x"] = _agent_pair("accelerations", agent_index, 0)
+        data[f"{prefix}_acc_y"] = _agent_pair("accelerations", agent_index, 1)
+        data[f"{prefix}_heading"] = _agent_scalar("headings", agent_index, np.float32)
+        data[f"{prefix}_action"] = _agent_scalar("actions", agent_index, np.float32)
     return pl.DataFrame(data)
+
+
+def _trajectory_metadata(cfg, seed: int, arrays: dict[str, np.ndarray]) -> dict[str, str]:
+    positions = np.asarray(arrays["positions"])
+    frame_count = int(positions.shape[0]) if positions.size else 0
+    num_agents = int(positions.shape[1]) if positions.size else int(cfg.boids.num_agents)
+    return {
+        "trajectory_schema_version": "2",
+        "layout": "wide_by_frame",
+        "seed": str(seed),
+        "fps": str(int(cfg.video.fps)),
+        "warmup": str(_video_warmup_steps(cfg)),
+        "canvas_width": str(int(cfg.canvas.width)),
+        "canvas_height": str(int(cfg.canvas.height)),
+        "partial_obs_size": str(int(cfg.canvas.partial)),
+        "num_agents": str(num_agents),
+        "frame_count": str(frame_count),
+    }
 
 
 def _with_time_axis(key: str, value: np.ndarray) -> np.ndarray:

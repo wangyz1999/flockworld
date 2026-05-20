@@ -14,7 +14,7 @@ trajectory:
 
 collection:
   enabled: true           # true = write a timestamped structured dataset under output_root
-  output_root: "output"
+  output_root: "data"
   total_episodes: 1000         # total episode videos to collect; collection stops exactly at this limit
   partial_agents: 10        # number of first-agent partial-observation videos to save per episode
   save_trajectory: true    # save one trajectory .parquet per episode in the collection folder

@@ -42,8 +42,9 @@ Output videos are written to `output/full_obs.mp4` (entire canvas) and
 `output/partial_obs.mp4` (square crop around the controlled agent). Multi-env
 headless runs use `generation.*_path_template` and write one full/partial pair
 per environment.
-Set `trajectory.enabled=true` to also save per-frame per-agent state/action
-trajectories as `.parquet`.
+Set `trajectory.enabled=true` to also save per-frame state/action trajectories
+as `.parquet`. Each row is one recorded frame, with agent fields stored in wide
+columns like `a1_pos_x`, `a1_vel_x`, `a1_acc_x`, and `a1_action`.
 
 Structured collection mode writes a timestamped dataset under `outputs/` with
 `settings.yaml`, `metadata.json`, `video_global/00000.mp4`,

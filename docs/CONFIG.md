@@ -27,14 +27,19 @@ python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `trajectory.enabled` | `false` | If `true`, save a `.parquet` table containing per-frame per-agent trajectories after each simulated/rendered frame. |
+| `trajectory.enabled` | `false` | If `true`, save a `.parquet` table containing per-frame trajectories after each simulated/rendered frame. |
 | `trajectory.path` | `"output/trajectory.parquet"` | Single-env trajectory output path. |
 | `trajectory.path_template` | `"output/env_{env:04d}_seed_{seed}_trajectory.parquet"` | Multi-env trajectory output template. Available fields: `{env}`, `{seed}`. |
 
-Trajectory files contain one row per `(frame, agent)` sample with columns for
-`position_x/y`, `velocity_x/y`, `acceleration_x/y`, `heading`, `action`, and
-`step_count`. `actions` are applied movement headings in radians; for
-uncontrolled flocking boids this is the heading produced by the boid update.
+Trajectory files contain one row per recorded frame. Agent state is stored in
+wide columns such as `a1_pos_x`, `a1_pos_norm_x`, `a1_vel_x`, `a1_acc_x`,
+`a1_heading`, and `a1_action`; additional agents use `a2_`, `a3_`, and so on.
+`pos_norm` values are normalized to `[0, 1]` by canvas width/height.
+`step_norm` is `step_count - video.warmup`. Constant run fields such as seed,
+fps, warmup, canvas size, partial-observation size, and agent count are stored
+as Parquet file metadata instead of repeated columns. `action` values are
+applied movement headings in radians; for uncontrolled flocking boids this is
+the heading produced by the boid update.
 
 ## `collection`
 
