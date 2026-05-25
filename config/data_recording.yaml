@@ -2,7 +2,7 @@ seed: 42
 device: "auto"             # auto | cpu | gpu
 
 generation:
-  num_envs: 64              # number of independent environments to generate in one headless run
+  num_envs: 4              # number of independent environments to generate in one headless run
   seed_stride: 1           # env i uses seed + i * seed_stride
   full_obs_path_template: "output/env_{env:04d}_seed_{seed}_full_obs.mp4"
   partial_obs_path_template: "output/env_{env:04d}_seed_{seed}_partial_obs.mp4"
@@ -15,18 +15,18 @@ trajectory:
 collection:
   enabled: true           # true = write a timestamped structured dataset under output_root
   output_root: "data"
-  total_episodes: 200         # total episode videos to collect; collection stops exactly at this limit
+  total_episodes: 10         # total episode videos to collect; collection stops exactly at this limit
   partial_agents: 10        # number of first-agent partial-observation videos to save per episode
   save_trajectory: true    # save one trajectory .parquet per episode in the collection folder
   timestamp: null          # optional fixed folder name; null uses local time YYYYMMDD_HHMMSS
 
 canvas:
-  width: 256
-  height: 256
-  partial: 64             # observation size
+  width: 720
+  height: 720
+  partial: 128             # observation size
 
 boids:
-  num_agents: 10        # JS reference default
+  num_agents: 100        # JS reference default
   vision: 25.0            # px — single radius for neighbour detection (all three rules)
   accuracy: 32.0          # approximate neighbour samples per boid; 0 means all neighbours
   alignment: 1.1          # alignment steering weight
@@ -38,7 +38,7 @@ boids:
   max_speed: 4.0          # px/tick — boids never go faster than this
   drag: 0.005             # velocity damping per tick (fraction lost)
   noise: 0.0              # heading randomness (scaled by pi/80 rad)
-  agent_size: 5.0        # px — scales the JS dart; reflect boundary insets by half this
+  agent_size: 10        # px — scales the JS dart; reflect boundary insets by half this
 
 env:
   max_steps: 1000
@@ -54,6 +54,8 @@ rendering:
   aa_blur: 1
   boid_alpha: 1
   color_mode: "fixed" # speed = JS HSV speed tint | fixed = use agent_color for every boid
+  border_width: 2          # px — width of border padded inside the canvas; 0 disables
+  border_color: [1.0, 1.0, 1.0]  # RGB in 0..1
 
 video:
   fps: 30

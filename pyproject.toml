@@ -18,7 +18,8 @@ dependencies = [
     "wandb>=0.17.0",
     "lightning>=2.6.4",
     "torch>=2.12.0",
-    "torchcodec>=0.11.0",
+    "decord>=0.6.0",
+    "torchinfo>=1.8.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -31,11 +32,8 @@ torch = [
 torchvision = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-torchcodec = [
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
 
-# CUDA Toolkit 13.0 → PyTorch cu130 wheels (torch, torchvision, torchcodec).
+# CUDA Toolkit 13.0 → PyTorch cu130 wheels (torch, torchvision).
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"

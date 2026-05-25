@@ -4,7 +4,7 @@ output_dir: output/modeling
 experiment_name: flock_action_video_baseline
 
 data:
-  root: data/recording/20260520_090911
+  root: data/recording/20260525_122419
   split: train
   val_fraction: 0.1
   num_context_frames: 4

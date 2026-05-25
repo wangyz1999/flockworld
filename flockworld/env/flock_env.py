@@ -46,6 +46,8 @@ class EnvConfig:
     color_mode: str
     boid_alpha: float
     dt: float
+    border_width: int
+    border_color: tuple
 
 
 def env_config_from_omega(cfg) -> EnvConfig:
@@ -76,6 +78,8 @@ def env_config_from_omega(cfg) -> EnvConfig:
         aa_blur=cfg.rendering.aa_blur,
         color_mode=cfg.rendering.color_mode,
         boid_alpha=cfg.rendering.boid_alpha,
+        border_width=int(cfg.rendering.get("border_width", 0)),
+        border_color=tuple(cfg.rendering.get("border_color", (1.0, 1.0, 1.0))),
     )
 
 
@@ -106,7 +110,7 @@ class EnvParams:
             ceil(ec.agent_size * 0.75 + ec.aa_blur + 1.0),
         )
         self.boundary_padding = jnp.float32(
-            ec.agent_size * 0.7 if ec.boundary == "reflect" else 0.0
+            ec.agent_size * 0.7 + ec.border_width if ec.boundary == "reflect" else 0.0
         )
         self.aa_blur = jnp.float32(ec.aa_blur)
         self.boid_alpha = jnp.float32(ec.boid_alpha)
@@ -115,6 +119,8 @@ class EnvParams:
         self.boundary = ec.boundary
         self.controlled_agent = ec.controlled_agent
         self.color_mode = ec.color_mode
+        self.border_width = int(ec.border_width)
+        self.border_color = jnp.array(ec.border_color, dtype=jnp.float32)
 
 
 # ── reset / step ────────────────────────────────────────────────────────
@@ -122,7 +128,9 @@ class EnvParams:
 def reset(key: jnp.ndarray, ec: EnvConfig) -> EnvState:
     """Initialise a new episode with random boid positions and velocities."""
     k1, k2, k3, k_state = jax.random.split(key, 4)
-    boundary_padding = ec.agent_size * 0.5 if ec.boundary == "reflect" else 0.0
+    boundary_padding = (
+        ec.agent_size * 0.5 + ec.border_width if ec.boundary == "reflect" else float(ec.border_width)
+    )
     max_x = max(boundary_padding, float(ec.canvas_w) - boundary_padding)
     max_y = max(boundary_padding, float(ec.canvas_h) - boundary_padding)
 
@@ -199,4 +207,5 @@ def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
         p.aa_blur,
         p.max_speed, p.boid_alpha,
         p.color_mode,
+        p.border_width, p.border_color,
     )

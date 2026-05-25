@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import cv2
@@ -106,19 +105,21 @@ class VideoRecorder:
     def _crop_partial(self, frame_rgb: np.ndarray, pos: np.ndarray) -> np.ndarray:
         size = self.partial_obs_size
         h, w = frame_rgb.shape[:2]
-        cx, cy = float(pos[0]), float(pos[1])
-        crop = cv2.getRectSubPix(frame_rgb, (size, size), (cx, cy))
-        # getRectSubPix border-replicates pixels outside the canvas, which smears
-        # edge boid colors as a streak toward the center.  Zero those regions out.
-        half = (size - 1) / 2.0
-        col0 = max(0, math.ceil(half - cx))
-        col1 = min(size, math.floor(w - 1 - cx + half) + 1)
-        row0 = max(0, math.ceil(half - cy))
-        row1 = min(size, math.floor(h - 1 - cy + half) + 1)
-        if col0 > 0: crop[:, :col0] = 0
-        if col1 < size: crop[:, col1:] = 0
-        if row0 > 0: crop[:row0] = 0
-        if row1 < size: crop[row1:] = 0
+        cx = int(round(float(pos[0])))
+        cy = int(round(float(pos[1])))
+        half = size // 2
+        x0 = cx - half
+        y0 = cy - half
+        crop = np.zeros((size, size, frame_rgb.shape[2]), dtype=frame_rgb.dtype)
+        src_x0 = max(0, x0)
+        src_y0 = max(0, y0)
+        src_x1 = min(w, x0 + size)
+        src_y1 = min(h, y0 + size)
+        if src_x1 > src_x0 and src_y1 > src_y0:
+            dst_x0 = src_x0 - x0
+            dst_y0 = src_y0 - y0
+            crop[dst_y0:dst_y0 + (src_y1 - src_y0), dst_x0:dst_x0 + (src_x1 - src_x0)] = \
+                frame_rgb[src_y0:src_y1, src_x0:src_x1]
         return crop
 
     def __enter__(self):

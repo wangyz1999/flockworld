@@ -1,0 +1,75 @@
+seed: 42
+output_dir: output/train_vae           # run dir = {output_dir}/{YYYYMMDD-HHMMSS}_{experiment_name}
+experiment_name: wan_vae_partial
+
+data:
+  root: data/recording/20260525_122419
+  val_fraction: 0.1
+  num_frames: 17            # Must be 1 + 4k for WanVAE chunking. 5 = 1 anchor + 1 chunk of 4 frames.
+  frame_stride: 1
+  image_size: [128, 128]
+  partial_agent_indices: null   # null -> use every video_a* folder under root.
+  overfit_n: null               # int -> cap train & val each to N samples and freeze clip window (overfit smoke test).
+
+dataloader:
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  dim: 32                 # encoder base channel width
+  dec_dim: 32             # decoder base channel width
+  z_dim: 8               # latent channels (pre-conv1 -> 2*z_dim for mu/logvar)
+  dim_mult: [1, 2, 4, 4]
+  num_res_blocks: 2
+  attn_scales: []
+  temperal_downsample: [false, true, true]
+  dropout: 0.0
+  patch_size: 2
+  pretrained_path: null   # set to .pt for fine-tuning from a Wan checkpoint.
+
+loss:
+  recon_loss: l1          # l1 or mse
+  kl_weight: 1.0e-6
+  logvar_clamp: [-30.0, 20.0]
+
+optim:
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 1.0e-6
+  scheduler: null         # null or "cosine"
+  t_max: 100000
+  eta_min: 1.0e-6
+
+trainer:
+  max_epochs: 100
+  accelerator: auto
+  devices: auto
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  log_every_n_steps: 20
+  val_check_interval: 1.0
+  limit_val_batches: 1.0
+  deterministic: false
+  summary_depth: 2          # ModelSummary callback depth: -1 = all submodules.
+  print_torchinfo: true     # Print per-layer output shapes via torchinfo before fit.
+  torchinfo_depth: 2
+
+checkpoint:
+  monitor: val/loss
+  mode: min
+  save_top_k: 3
+  save_last: true
+  every_n_epochs: 1
+
+logger:
+  use_wandb: true
+  wandb_project: flockworld-vae
+  wandb_entity: null
+  log_video_every_n_steps: 800   # 0 disables periodic video logging. Logs 1 train + 1 val clip.
+  log_video_to_wandb: true        # if false, videos are still saved to {run_dir}/videos but not uploaded.
+  video_fps: 8
+  video_codec: avc1               # H.264 — plays in browsers / wandb UI. Fallback to mp4v if avc1 unavailable.

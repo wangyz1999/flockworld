@@ -53,7 +53,7 @@ def _hsv_to_rgb(h, s, v):
 
 @partial(
     jax.jit,
-    static_argnames=("height", "width", "patch_radius", "color_mode"),
+    static_argnames=("height", "width", "patch_radius", "color_mode", "border_width"),
 )
 def _render_frame_js_dart(
     positions, velocities, agent_color, background_color,
@@ -61,6 +61,8 @@ def _render_frame_js_dart(
     agent_size, max_speed, alpha, aa_blur,
     patch_radius: int,
     color_mode: str,
+    border_width: int,
+    border_color,
 ):
     """Render the original JS PIXI dart with a batched patch rasterizer.
 
@@ -95,7 +97,10 @@ def _render_frame_js_dart(
     pixel_pos = jnp.stack(
         [xs.astype(jnp.float32), ys.astype(jnp.float32)], axis=-1,
     )
-    rel = pixel_pos - positions[:, None, :]
+    # Use the rounded center (not float position) so the dart's visual centroid
+    # is locked to its integer pixel — keeps the focal agent stable inside the
+    # integer-aligned partial crop.
+    rel = pixel_pos - centers.astype(jnp.float32)[:, None, :]
     c = jnp.cos(-headings)[:, None]
     s = jnp.sin(-headings)[:, None]
     local = jnp.stack(
@@ -125,7 +130,14 @@ def _render_frame_js_dart(
         background_color[None, :] * trans[:, None]
         + avg_rgb * (1.0 - trans[:, None])
     )
-    return jnp.clip(image.reshape((height, width, 3)), 0.0, 1.0)
+    image = jnp.clip(image.reshape((height, width, 3)), 0.0, 1.0)
+    if border_width > 0:
+        bw = min(border_width, min(height, width) // 2)
+        ys = jnp.arange(height)[:, None]
+        xs = jnp.arange(width)[None, :]
+        on_border = (ys < bw) | (ys >= height - bw) | (xs < bw) | (xs >= width - bw)
+        image = jnp.where(on_border[..., None], border_color[None, None, :], image)
+    return image
 
 def render_frame(
     positions, velocities,
@@ -135,6 +147,7 @@ def render_frame(
     aa_blur,
     max_speed, boid_alpha,
     color_mode,
+    border_width, border_color,
 ):
     """Render a complete (H, W, 3) float32 frame."""
     image_h, image_w = uv_grid.shape[:2]
@@ -144,4 +157,5 @@ def render_frame(
         agent_size, max_speed, boid_alpha, aa_blur,
         agent_render_radius,
         color_mode,
+        int(border_width), border_color,
     )
