@@ -1,0 +1,47 @@
+seed: 42
+device: auto
+output_dir: output/modeling
+experiment_name: flock_action_video_baseline
+
+data:
+  root: data/recording/20260520_090911
+  split: train
+  val_fraction: 0.1
+  num_context_frames: 4
+  num_future_frames: 8
+  frame_stride: 1
+  image_size: [128, 128]
+  partial_agent_indices: null   # null means use all available video_a* folders.
+  action_features:
+    - action_x
+    - action_y
+    - pos_norm_x
+    - pos_norm_y
+    - vel_x
+    - vel_y
+  random_clip: true
+
+dataloader:
+  batch_size: 8
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  in_channels: 6              # RGB context summary + RGB partial observation summary.
+  hidden_channels: 64
+  action_dim: 6
+  action_hidden_dim: 128
+  out_channels: 3
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.000001
+
+train:
+  epochs: 10
+  log_every: 20
+  save_every: 1
+  grad_clip_norm: 1.0
+  amp: false

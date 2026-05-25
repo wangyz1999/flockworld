@@ -33,13 +33,15 @@ python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0
 
 Trajectory files contain one row per recorded frame. Agent state is stored in
 wide columns such as `a1_pos_x`, `a1_pos_norm_x`, `a1_vel_x`, `a1_acc_x`,
-`a1_heading`, and `a1_action`; additional agents use `a2_`, `a3_`, and so on.
+`a1_heading`, `a1_action_x`, and `a1_action_y`; additional agents use `a2_`,
+`a3_`, and so on.
 `pos_norm` values are normalized to `[0, 1]` by canvas width/height.
 `step_norm` is `step_count - video.warmup`. Constant run fields such as seed,
 fps, warmup, canvas size, partial-observation size, and agent count are stored
-as Parquet file metadata instead of repeated columns. `action` values are
-applied movement headings in radians; for uncontrolled flocking boids this is
-the heading produced by the boid update.
+as Parquet file metadata instead of repeated columns. `action_x` and
+`action_y` are the combined 2D steering/acceleration vector produced by the
+alignment, cohesion, and separation rules. `heading` stores the movement angle
+in radians.
 
 ## `collection`
 

@@ -56,8 +56,8 @@ rendering:
   color_mode: "fixed" # speed = JS HSV speed tint | fixed = use agent_color for every boid
 
 video:
-  backend: "opencv"     # opencv = CPU mp4v writer; pynv = DLPack -> PyNvVideoCodec/NVENC (requires canvas width>=145 for h264)
-  codec: "h264"           # pynv backend codec: h264, hevc, or av1
+  backend: "opencv"     # opencv = CPU writer; pynv = DLPack -> PyNvVideoCodec/NVENC (requires canvas width>=145 for h264)
+  codec: "mp4v"           # opencv: mp4v, h264, vp8, vp9, mjpg; pynv: h264, hevc, av1
   gpu_id: 0               # pynv backend GPU id
   preset: "p1"            # pynv backend NVENC preset; p1 is fastest, p7 is highest quality
   bitrate: "20M"          # pynv backend target bitrate

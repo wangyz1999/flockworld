@@ -306,7 +306,7 @@ def _trajectory_snapshot_jnp(state, jnp):
         "velocities": state.boids.velocities,
         "accelerations": state.boids.accelerations,
         "headings": state.boids.headings,
-        "actions": state.boids.headings,
+        "actions": state.boids.accelerations,
         "step_count": jnp.asarray(state.step_count, dtype=jnp.int32),
     }
 
@@ -317,7 +317,7 @@ def _trajectory_snapshot_np(state):
         "velocities": np.asarray(state.boids.velocities),
         "accelerations": np.asarray(state.boids.accelerations),
         "headings": np.asarray(state.boids.headings),
-        "actions": np.asarray(state.boids.headings),
+        "actions": np.asarray(state.boids.accelerations),
         "step_count": np.asarray(state.step_count, dtype=np.int32),
     }
 
@@ -439,7 +439,8 @@ def _trajectory_dataframe(pl, cfg, arrays: dict[str, np.ndarray]):
         data[f"{prefix}_acc_x"] = _agent_pair("accelerations", agent_index, 0)
         data[f"{prefix}_acc_y"] = _agent_pair("accelerations", agent_index, 1)
         data[f"{prefix}_heading"] = _agent_scalar("headings", agent_index, np.float32)
-        data[f"{prefix}_action"] = _agent_scalar("actions", agent_index, np.float32)
+        data[f"{prefix}_action_x"] = _agent_pair("actions", agent_index, 0)
+        data[f"{prefix}_action_y"] = _agent_pair("actions", agent_index, 1)
     return pl.DataFrame(data)
 
 
@@ -448,7 +449,7 @@ def _trajectory_metadata(cfg, seed: int, arrays: dict[str, np.ndarray]) -> dict[
     frame_count = int(positions.shape[0]) if positions.size else 0
     num_agents = int(positions.shape[1]) if positions.size else int(cfg.boids.num_agents)
     return {
-        "trajectory_schema_version": "2",
+        "trajectory_schema_version": "3",
         "layout": "wide_by_frame",
         "seed": str(seed),
         "fps": str(int(cfg.video.fps)),
@@ -468,7 +469,7 @@ def _with_time_axis(key: str, value: np.ndarray) -> np.ndarray:
         "velocities": 3,
         "accelerations": 3,
         "headings": 2,
-        "actions": 2,
+        "actions": 3,
         "step_count": 1,
     }[key]
     if value.ndim == expected_ndim:

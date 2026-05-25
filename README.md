@@ -44,7 +44,8 @@ headless runs use `generation.*_path_template` and write one full/partial pair
 per environment.
 Set `trajectory.enabled=true` to also save per-frame state/action trajectories
 as `.parquet`. Each row is one recorded frame, with agent fields stored in wide
-columns like `a1_pos_x`, `a1_vel_x`, `a1_acc_x`, and `a1_action`.
+columns like `a1_pos_x`, `a1_vel_x`, `a1_acc_x`, `a1_action_x`, and
+`a1_action_y`.
 
 Structured collection mode writes a timestamped dataset under `outputs/` with
 `settings.yaml`, `metadata.json`, `video_global/00000.mp4`,
@@ -126,6 +127,57 @@ config/
   data_recording.yaml Data recording defaults
 data_recording.py     CLI entry point
 ```
+
+## World-model training (Solaris baseline)
+
+The `modeling/` package is an adaptation of the Solaris multi-agent video
+world-model (Wan-2.1-style flow-matching diffusion in JAX/Flax-nnx) to the
+FlockWorld data format. By default it trains the single-player variant on one
+chosen agent's 64×64 partial view, conditioning on that agent's steering
+action plus position and velocity features.
+
+Dataset layout the trainer expects (already produced by `data_recording.py`):
+
+```
+data/recording/<timestamp>/
+  metadata.json
+  video_a1/00000.mp4    # one chosen agent's partial view per episode
+  trajectory/00000.parquet   # contains a{k}_action_x/a{k}_action_y columns
+```
+
+Smoke-test one training step on CPU:
+
+```bash
+uv sync
+JAX_PLATFORMS=cpu uv run python train_world_model.py \
+  device.batch_size=1 \
+  num_frames_context=9 \
+  runner.params.total_steps=1 \
+  device.num_workers=0
+```
+
+On a GPU host you can drop `JAX_PLATFORMS=cpu` and raise the batch/steps
+counts. Common overrides:
+
+```bash
+# Train for 10k steps on GPU
+uv run python train_world_model.py runner.params.total_steps=10000
+
+# Use a different agent's view
+uv run python train_world_model.py dataset.additional_params.agent_index=5
+
+# Point at a different recording timestamp
+uv run python train_world_model.py dataset.train_dataset_name=20260520_090911
+```
+
+### Pretrained Wan VAE / CLIP weights
+
+The Solaris architecture uses a frozen Wan-2.1 VAE and the WanX image-CLIP
+encoder. If `pretrained/vae.pt` and `pretrained/clip.pt` (Orbax checkpoints)
+exist they are restored; otherwise both modules are initialised randomly with
+a warning and the run becomes a structural smoke test. To exercise the real
+baseline, drop the converted Wan 2.1 checkpoints into `pretrained/` before
+training.
 
 ## Extensibility
 
