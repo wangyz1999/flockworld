@@ -34,7 +34,6 @@ from flockworld.utils import (
     _output_paths_for_env,
     _trajectory_path_for_env,
     _trajectory_enabled,
-    _video_recorder_cls,
     _tree_index,
     _make_headless_warmup_fn,
     _make_headless_multi_warmup_fn,
@@ -159,13 +158,10 @@ def _run_headless(
                     if save_trajectory:
                         _append_trajectory_chunk(trajectory_chunks, trajectory, n)
 
-                    if hasattr(recorder, "record_jax_chunk"):
-                        recorder.record_jax_chunk(frames, partial_positions, n)
-                    else:
-                        frames_np = np.asarray(frames)
-                        positions_np = np.asarray(partial_positions)
-                        for frame_u8, partial_pos in zip(frames_np[:n], positions_np[:n]):
-                            recorder.record(frame_u8, partial_pos)
+                    frames_np = np.asarray(frames)
+                    positions_np = np.asarray(partial_positions)
+                    for frame_u8, partial_pos in zip(frames_np[:n], positions_np[:n]):
+                        recorder.record(frame_u8, partial_pos)
 
                     recorded += n
                     progress.advance(task, n)
@@ -731,7 +727,7 @@ def main():
     from flockworld.env.flock_env import EnvParams, env_config_from_omega, render, reset, step
     from flockworld.policies import get_policy, init_policy
     from flockworld.rendering.renderer import build_uv_grid
-    from flockworld.video.recorder import DlpackNvencVideoRecorder, VideoRecorder
+    from flockworld.video.recorder import VideoRecorder
 
     ec = env_config_from_omega(cfg)
     params = EnvParams(ec)
@@ -770,15 +766,7 @@ def main():
             step, render,
         )
     else:
-        recorder_cls = _video_recorder_cls(cfg, VideoRecorder, DlpackNvencVideoRecorder)
-        if str(cfg.video.get("backend", "opencv")).lower() in {"pynv", "dlpack", "nvenc"}:
-            chunk_size = max(1, int(cfg.video.get("chunk_size", 1)))
-            can_chunk = (not ec.controlled_agent) or cfg.env.agent_policy == "straight"
-            if chunk_size <= 1 or not can_chunk:
-                raise ValueError(
-                    "video.backend=pynv requires video.chunk_size > 1 and an uncontrolled "
-                    "or straight controlled-agent policy so frames stay batched on GPU."
-                )
+        recorder_cls = VideoRecorder
         if _collection_enabled(cfg):
             _run_collection(
                 cfg, ec, params, uv_grid, policy_name, policy_fn,

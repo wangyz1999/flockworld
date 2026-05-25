@@ -126,23 +126,6 @@ def _trajectory_path_for_env(cfg, env_index: int, seed: int) -> str:
     return template.format(env=env_index, seed=seed)
 
 
-def _video_recorder_cls(cfg, opencv_recorder_cls, dlpack_recorder_cls):
-    backend = str(cfg.video.get("backend", "opencv")).lower()
-    if backend == "opencv":
-        return opencv_recorder_cls
-    if backend in {"pynv", "dlpack", "nvenc"}:
-        return partial(
-            dlpack_recorder_cls,
-            codec=str(cfg.video.get("codec", "h264")),
-            gpu_id=int(cfg.video.get("gpu_id", 0)),
-            preset=str(cfg.video.get("preset", "p1")),
-            bitrate=cfg.video.get("bitrate", "20M"),
-        )
-    raise ValueError(
-        f"Unknown video.backend={backend!r}. Supported backends: opencv, pynv."
-    )
-
-
 # ---------------------------------------------------------------------------
 # JAX tree / batching helpers
 # ---------------------------------------------------------------------------
@@ -337,11 +320,6 @@ def _append_multi_trajectory_frame(trajectory_chunks: list[list[dict]], trajecto
 
 
 def _record_multi_chunk(recorders, frames, positions, n: int):
-    if recorders and hasattr(recorders[0], "record_jax_chunk"):
-        for env_index, recorder in enumerate(recorders):
-            recorder.record_jax_chunk(frames[:n, env_index], positions[:n, env_index], n)
-        return
-
     frames_np = np.asarray(frames[:n])
     positions_np = np.asarray(positions[:n])
     for env_index, recorder in enumerate(recorders):

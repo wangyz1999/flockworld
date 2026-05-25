@@ -34,7 +34,6 @@ python data_recording.py video.chunk_size=64
 python data_recording.py video.warmup=120
 python data_recording.py generation.num_envs=8 video.duration=5
 python data_recording.py trajectory.enabled=true
-python data_recording.py video.backend=pynv video.chunk_size=256
 python data_recording.py collection.enabled=true collection.total_episodes=100 generation.num_envs=8 collection.partial_agents=2
 ```
 
@@ -51,12 +50,6 @@ Structured collection mode writes a timestamped dataset under `outputs/` with
 `video_a1/00000.mp4`, additional partial-agent folders up to
 `collection.partial_agents`, and per-episode trajectory files under
 `trajectory/`.
-
-For maximum NVIDIA throughput, `video.backend=pynv` keeps batched JAX frames on
-the GPU and encodes with PyNvVideoCodec/NVENC through DLPack. It requires
-`torch`, `PyNvVideoCodec`, `ffmpeg` for `.mp4` muxing, and a chunked run
-(`video.chunk_size > 1`) with an uncontrolled or straight controlled-agent
-policy.
 
 ## Gymnasium API
 
