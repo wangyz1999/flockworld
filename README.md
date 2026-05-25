@@ -44,8 +44,7 @@ headless runs use `generation.*_path_template` and write one full/partial pair
 per environment.
 Set `trajectory.enabled=true` to also save per-frame state/action trajectories
 as `.parquet`. Each row is one recorded frame, with agent fields stored in wide
-columns like `a1_pos_x`, `a1_vel_x`, `a1_acc_x`, `a1_action_x`, and
-`a1_action_y`.
+columns like `a1_pos_x`, `a1_vel_x`, `a1_acc_x`, and `a1_acc_y`.
 
 Structured collection mode writes a timestamped dataset under `outputs/` with
 `settings.yaml`, `metadata.json`, `video_global/00000.mp4`,
@@ -134,7 +133,7 @@ The `modeling/` package is an adaptation of the Solaris multi-agent video
 world-model (Wan-2.1-style flow-matching diffusion in JAX/Flax-nnx) to the
 FlockWorld data format. By default it trains the single-player variant on one
 chosen agent's 64×64 partial view, conditioning on that agent's steering
-action plus position and velocity features.
+acceleration.
 
 Dataset layout the trainer expects (already produced by `data_recording.py`):
 
@@ -142,7 +141,7 @@ Dataset layout the trainer expects (already produced by `data_recording.py`):
 data/recording/<timestamp>/
   metadata.json
   video_a1/00000.mp4    # one chosen agent's partial view per episode
-  trajectory/00000.parquet   # contains a{k}_action_x/a{k}_action_y columns
+  trajectory/00000.parquet   # contains a{k}_acc_x/a{k}_acc_y columns
 ```
 
 Smoke-test one training step on CPU:

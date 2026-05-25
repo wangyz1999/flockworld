@@ -13,12 +13,8 @@ data:
   image_size: [128, 128]
   partial_agent_indices: null   # null means use all available video_a* folders.
   action_features:
-    - action_x
-    - action_y
-    - pos_norm_x
-    - pos_norm_y
-    - vel_x
-    - vel_y
+    - acc_x
+    - acc_y
   random_clip: true
 
 dataloader:
@@ -31,7 +27,7 @@ dataloader:
 model:
   in_channels: 6              # RGB context summary + RGB partial observation summary.
   hidden_channels: 64
-  action_dim: 6
+  action_dim: 2
   action_hidden_dim: 128
   out_channels: 3
 
