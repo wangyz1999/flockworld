@@ -13,7 +13,7 @@ from modeling.utils.seed import seed_everything
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train an action-conditioned FlockWorld video model.")
-    parser.add_argument("--config", default=None, help="Path to a YAML config. Defaults to modeling/config/train.yaml.")
+    parser.add_argument("--config", default=None, help="Path to a YAML config. Defaults to config/train.yaml.")
     parser.add_argument("overrides", nargs="*", help="OmegaConf dotlist overrides, e.g. train.epochs=1 data.root=...")
     return parser.parse_args()
 
