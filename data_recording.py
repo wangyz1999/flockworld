@@ -503,7 +503,7 @@ def _record_collection_batch(
                     "video_partial": [
                         _relative_path(path, output_dir) for path in partial_paths
                     ],
-                    "trajectory": _relative_path(trajectory_path, output_dir)
+                    "state_action": _relative_path(trajectory_path, output_dir)
                     if save_trajectory else None,
                 }
             )
@@ -584,7 +584,7 @@ def _prepare_collection_dirs(output_dir: Path, partial_agent_count: int):
     (output_dir / "video_global").mkdir(parents=True, exist_ok=True)
     for agent_index in range(partial_agent_count):
         (output_dir / f"video_a{agent_index + 1}").mkdir(parents=True, exist_ok=True)
-    (output_dir / "trajectory").mkdir(parents=True, exist_ok=True)
+    (output_dir / "state_action").mkdir(parents=True, exist_ok=True)
 
 
 def _collection_paths_for_episode(cfg, output_dir: Path, episode_index: int, partial_agent_count: int):
@@ -596,7 +596,7 @@ def _collection_paths_for_episode(cfg, output_dir: Path, episode_index: int, par
             output_dir / f"video_a{agent_index + 1}" / filename
             for agent_index in range(partial_agent_count)
         ]
-    trajectory_path = output_dir / "trajectory" / f"{episode_index:05d}.parquet"
+    trajectory_path = output_dir / "state_action" / f"{episode_index:05d}.parquet"
     return full_path, partial_paths, trajectory_path
 
 

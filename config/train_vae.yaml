@@ -44,7 +44,7 @@ optim:
   eta_min: 1.0e-6
 
 trainer:
-  max_epochs: 100
+  max_epochs: 20000
   accelerator: auto
   devices: auto
   precision: bf16-mixed
