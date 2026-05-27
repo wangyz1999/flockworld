@@ -228,6 +228,7 @@ def main():
     args = parse_args()
     cfg = load_cfg(args.config, args.overrides)
     seed_everything(int(cfg.seed))
+    torch.set_float32_matmul_precision("high")
 
     print(OmegaConf.to_yaml(cfg))
 

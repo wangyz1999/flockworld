@@ -116,6 +116,7 @@ class WanVAELightning(L.LightningModule):
         self.log_dict(
             {f"train/{k}": v for k, v in losses.items()},
             on_step=True, on_epoch=True, prog_bar=True, sync_dist=True,
+            batch_size=x.size(0),
         )
         return losses["loss"]
 
@@ -126,6 +127,7 @@ class WanVAELightning(L.LightningModule):
         self.log_dict(
             {f"val/{k}": v for k, v in losses.items()},
             on_step=False, on_epoch=True, prog_bar=True, sync_dist=True,
+            batch_size=x.size(0),
         )
         return losses["loss"]
 
