@@ -3,7 +3,7 @@ output_dir: output/train_vae           # run dir = {output_dir}/{YYYYMMDD-HHMMSS
 experiment_name: wan_vae_partial
 
 data:
-  root: data/recording/20260525_122419
+  root: data/recording/20260526_090139
   val_fraction: 0.1
   num_frames: 17            # Must be 1 + 4k for WanVAE chunking. 5 = 1 anchor + 1 chunk of 4 frames.
   frame_stride: 1
@@ -44,7 +44,7 @@ optim:
   eta_min: 1.0e-6
 
 trainer:
-  max_epochs: 20000
+  max_epochs: 100
   accelerator: auto
   devices: auto
   precision: bf16-mixed
