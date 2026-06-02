@@ -2,10 +2,67 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+
+class _FFmpegH264Writer:
+    """Writes raw RGB frames to an H.264 mp4 via a piped ffmpeg subprocess.
+
+    H.264 (libx264) yields ~5–10× smaller files than mp4v and plays natively
+    in browsers, whereas the libopencv wheel from PyPI ships without a
+    libx264 encoder."""
+
+    def __init__(self, path: Path, fps: int, width: int, height: int):
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg not found on PATH; required for H.264 recording")
+        self._width = width
+        self._height = height
+        self._path = path
+        cmd = [
+            ffmpeg,
+            "-hide_banner", "-loglevel", "error",
+            "-y",
+            "-f", "rawvideo",
+            "-pix_fmt", "rgb24",
+            "-s", f"{width}x{height}",
+            "-r", str(fps),
+            "-i", "-",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-movflags", "+faststart",
+            str(path),
+        ]
+        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+
+    def write_rgb(self, frame_rgb: np.ndarray) -> None:
+        if frame_rgb.shape[:2] != (self._height, self._width):
+            raise ValueError(
+                f"frame shape {frame_rgb.shape[:2]} does not match writer "
+                f"({self._height}, {self._width}) for {self._path}"
+            )
+        if frame_rgb.dtype != np.uint8:
+            frame_rgb = frame_rgb.astype(np.uint8)
+        if not frame_rgb.flags["C_CONTIGUOUS"]:
+            frame_rgb = np.ascontiguousarray(frame_rgb)
+        self._proc.stdin.write(frame_rgb.tobytes())
+
+    def close(self) -> None:
+        if self._proc is None:
+            return
+        try:
+            if self._proc.stdin is not None:
+                self._proc.stdin.close()
+            self._proc.wait(timeout=30)
+        finally:
+            self._proc = None
 
 
 class VideoRecorder:
@@ -28,18 +85,13 @@ class VideoRecorder:
         self.partial_obs_size = partial_obs_size
         self.canvas_w = canvas_w
         self.canvas_h = canvas_h
-        self._full_writer = None
-        self._partial_writer = None
-        self._partial_writers = []
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self._full_writer: _FFmpegH264Writer | None = None
+        self._partial_writers: list[_FFmpegH264Writer] = []
 
         if full_obs_path is not None:
             p = Path(full_obs_path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            self._full_writer = cv2.VideoWriter(
-                str(p), fourcc, fps, (canvas_w, canvas_h),
-            )
+            self._full_writer = _FFmpegH264Writer(p, fps, canvas_w, canvas_h)
 
         partial_paths = []
         if partial_obs_path is not None:
@@ -50,10 +102,9 @@ class VideoRecorder:
         for partial_path in partial_paths:
             p = Path(partial_path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            writer = cv2.VideoWriter(
-                str(p), fourcc, fps, (partial_obs_size, partial_obs_size),
+            self._partial_writers.append(
+                _FFmpegH264Writer(p, fps, partial_obs_size, partial_obs_size)
             )
-            self._partial_writers.append(writer)
 
         self._partial_writer = self._partial_writers[0] if self._partial_writers else None
 
@@ -67,23 +118,21 @@ class VideoRecorder:
         frame_rgb : (H, W, 3) uint8 RGB image.
         controlled_pos : (2,) or (K, 2) pixel positions for partial crops.
         """
-        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-
         if self._full_writer is not None:
-            self._full_writer.write(frame_bgr)
+            self._full_writer.write_rgb(frame_rgb)
 
         if self._partial_writers:
             positions = self._normalize_positions(controlled_pos)
             for writer, pos in zip(self._partial_writers, positions):
                 crop = self._crop_partial(frame_rgb, pos)
-                writer.write(cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
+                writer.write_rgb(crop)
 
     def close(self):
         if self._full_writer is not None:
-            self._full_writer.release()
+            self._full_writer.close()
             self._full_writer = None
         for writer in self._partial_writers:
-            writer.release()
+            writer.close()
         self._partial_writers = []
         self._partial_writer = None
 

@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import lightning as L
+import numpy as np
 import torch
 from lightning.pytorch.callbacks import Callback, LearningRateMonitor, ModelCheckpoint, ModelSummary
 from lightning.pytorch.loggers import CSVLogger, WandbLogger
@@ -155,26 +156,52 @@ class WandbVideoLoggingCallback(Callback):
 
 
 def _write_mp4_cv2(frames_rgb, path: Path, fps: int, codec: str = "avc1") -> bool:
-    """Write (T, H, W, 3) uint8 RGB array to mp4 via OpenCV. Tries the requested
-    codec first (default ``avc1`` / H.264 for browser playback) and falls back
-    to ``mp4v`` if the codec is unavailable in this OpenCV build."""
-    try:
-        import cv2
-    except ImportError:
-        print(f"[video] cv2 unavailable; skipping {path}")
+    """Write (T, H, W, 3) uint8 RGB array to an H.264 mp4 by piping frames to
+    ffmpeg. The PyPI opencv wheel ships without libx264, so going through
+    ffmpeg is the only reliable way to produce browser-playable H.264.
+
+    The ``codec`` arg is kept for backward-compat with the config but ignored;
+    we always emit H.264 (libx264)."""
+    import shutil
+    import subprocess
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        print(f"[video] ffmpeg not found on PATH; skipping {path}")
         return False
     T, H, W, _ = frames_rgb.shape
-    for code in (codec, "mp4v"):
-        fourcc = cv2.VideoWriter_fourcc(*code)
-        writer = cv2.VideoWriter(str(path), fourcc, float(fps), (W, H))
-        if writer.isOpened():
-            for t in range(T):
-                writer.write(cv2.cvtColor(frames_rgb[t], cv2.COLOR_RGB2BGR))
-            writer.release()
-            return True
-        print(f"[video] codec {code!r} unavailable, trying fallback")
-    print(f"[video] cv2 failed to open any writer for {path}")
-    return False
+    cmd = [
+        ffmpeg,
+        "-hide_banner", "-loglevel", "error",
+        "-y",
+        "-f", "rawvideo",
+        "-pix_fmt", "rgb24",
+        "-s", f"{W}x{H}",
+        "-r", str(int(fps)),
+        "-i", "-",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-movflags", "+faststart",
+        str(path),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    try:
+        for t in range(T):
+            frame = frames_rgb[t]
+            if frame.dtype != np.uint8:
+                frame = frame.astype(np.uint8)
+            if not frame.flags["C_CONTIGUOUS"]:
+                frame = np.ascontiguousarray(frame)
+            proc.stdin.write(frame.tobytes())
+    finally:
+        if proc.stdin is not None:
+            proc.stdin.close()
+        proc.wait(timeout=30)
+    if proc.returncode != 0:
+        print(f"[video] ffmpeg failed (code {proc.returncode}) for {path}")
+        return False
+    return True
 
 
 def build_callbacks(cfg, run_dir: Path):
