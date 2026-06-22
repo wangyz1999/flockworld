@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 from torch import nn
@@ -174,29 +175,50 @@ class FlowTrainer:
             # stack GT (top) over prediction (bottom) -> (T, 2H, W, C) uint8 RGB
             vid = torch.cat([frames[0], clip[0]], dim=2).clamp(-1, 1)
             vid = ((vid + 1) / 2 * 255).round().to(torch.uint8)
-            vid = vid.permute(0, 2, 3, 1).cpu().numpy()
+            vid = vid.permute(0, 2, 3, 1).contiguous().cpu().numpy()  # (T, 2H, W, C) RGB
             path = self._write_mp4(vid, epoch, fps=int(self.cfg.logger.get("video_fps", 8)))
-            # Pass a file path (not a raw array) so wandb doesn't need moviepy.
-            self.wandb.log({"val/rollout": self.wandb.Video(str(path), format="mp4")}, step=self.global_step)
+            if path is not None:
+                # Pass a file path (not a raw array) so wandb doesn't need moviepy.
+                self.wandb.log({"val/rollout": self.wandb.Video(str(path), format="mp4")}, step=self.global_step)
         except Exception as e:  # noqa: BLE001
             print(f"[warn] rollout video logging failed at epoch {epoch}: {e}")
 
     def _write_mp4(self, frames_thwc, epoch, fps: int):
-        """Write RGB frames (T,H,W,C uint8) to an mp4 with OpenCV; return the path."""
-        import cv2
+        """Write RGB frames (T,H,W,C uint8) to a browser-playable H.264 mp4.
 
+        Pipes raw frames to the system ffmpeg with libx264 (software encoder) --
+        same approach as the VAE pipeline. The PyPI opencv wheel lacks libx264,
+        and this machine's cv2 routes the 'avc1' fourcc to a missing
+        h264_v4l2m2m hardware encoder, so cv2.VideoWriter is unreliable here.
+        """
+        import shutil
+        import subprocess
+
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            print("[warn] ffmpeg not on PATH; skipping rollout video")
+            return None
         vdir = self.output_dir / "videos"
         vdir.mkdir(parents=True, exist_ok=True)
         path = vdir / f"rollout_epoch_{epoch:04d}.mp4"
         _, h, w, _ = frames_thwc.shape
-        writer = None
-        for codec in ("avc1", "mp4v"):  # avc1=H.264 (browser/wandb-friendly), mp4v fallback
-            writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*codec), fps, (w, h))
-            if writer.isOpened():
-                break
-        for fr in frames_thwc:
-            writer.write(cv2.cvtColor(fr, cv2.COLOR_RGB2BGR))
-        writer.release()
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(int(fps)),
+            "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-preset", "veryfast", "-crf", "23", "-movflags", "+faststart", str(path),
+        ]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        try:
+            for fr in frames_thwc:
+                proc.stdin.write(np.ascontiguousarray(fr).tobytes())
+        finally:
+            if proc.stdin is not None:
+                proc.stdin.close()
+            proc.wait(timeout=30)
+        if proc.returncode != 0:
+            print(f"[warn] ffmpeg failed (code {proc.returncode}) for {path}")
+            return None
         return path
 
     def save_checkpoint(self, epoch: int, train_loss: float, val_loss: float | None):
