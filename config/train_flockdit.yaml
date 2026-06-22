@@ -1,0 +1,57 @@
+seed: 42
+device: auto
+output_dir: output/flock_dit
+experiment_name: flock_dit_single
+
+data:
+  root: data/recording/20260617_152532
+  val_fraction: 0.1
+  num_context_frames: 4
+  num_future_frames: 12          # 4 + 12 = 16-frame clips
+  frame_stride: 1
+  image_size: [64, 64]           # pixel-space; raise/lower freely (model is resolution-agnostic)
+  partial_agent_indices: null    # null -> all available video_a* folders
+  num_agents: 1                  # >1 selects the multi-agent (token-interleaving) path
+  action_features:
+    - acc_x
+    - acc_y
+  random_clip: true
+
+dataloader:
+  batch_size: 32   # target for the larger dataset; override (e.g. =16) for the current small one
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  # ---- pixel-space defaults; for VAE latents override in/out_channels + patch* + image_size ----
+  in_channels: 3
+  out_channels: 3
+  patch: 8                       # 64x64 / 8 -> 8x8 = 64 tokens/frame
+  patch_t: 1
+  # ---- transformer scale (medium, fits a single RTX 4090) ----
+  dim: 512
+  depth: 8
+  heads: 8
+  ffn_dim: 2048
+  local_attn_size: -1            # -1 = full causal across frames; set a window (e.g. 6) for long/multi-agent
+
+optim:
+  lr: 0.0002
+  weight_decay: 0.000001
+
+train:
+  epochs: 50
+  log_every: 20
+  save_every: 1
+  grad_clip_norm: 1.0
+  amp: true
+
+logger:
+  use_wandb: true
+  wandb_project: flock-world-model   # distinct from the VAE project (flockworld-vae)
+  wandb_entity: null
+  log_sample_every: 5                # epochs between rollout-video logs (top=GT, bottom=pred)
+  sample_steps: 50                   # Euler steps for the logged rollout
+  video_fps: 8
