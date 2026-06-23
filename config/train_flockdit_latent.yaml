@@ -1,0 +1,60 @@
+seed: 42
+device: auto
+output_dir: output/flock_dit_latent
+experiment_name: flock_dit_latent
+
+data:
+  root: data/recording/20260622_152605
+  latent: true                    # use cached VAE latents (run precompute_latents.py first)
+  latent_cache_dir: latent_cache  # subfolder under data.root
+  val_fraction: 0.1
+  num_context_frames: 2           # LATENT frames (each ~= 4 pixel frames)
+  num_future_frames: 4            # LATENT frames; 6 total ~= 21 pixel frames of motion
+  num_agents: 1
+  action_features:
+    - acc_x
+    - acc_y
+  random_clip: true
+
+vae:
+  checkpoint_path: pretrained/last.ckpt
+  encode_image_size: [128, 128]   # VAE's native input resolution
+
+dataloader:
+  batch_size: 32
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  # ---- latent-space: operate on 8-channel, 8x8 VAE latents ----
+  in_channels: 8                  # z_dim
+  out_channels: 8
+  patch: 1                        # 8x8 latent -> 64 tokens/frame
+  patch_t: 1
+  # ---- transformer scale (same medium model as pixel) ----
+  dim: 512
+  depth: 8
+  heads: 8
+  ffn_dim: 2048
+  local_attn_size: -1
+
+optim:
+  lr: 0.0002
+  weight_decay: 0.000001
+
+train:
+  epochs: 100
+  log_every: 20
+  save_every: 1
+  grad_clip_norm: 1.0
+  amp: true
+
+logger:
+  use_wandb: true
+  wandb_project: flock-world-model
+  wandb_entity: null
+  log_sample_every: 5             # rollout videos are decoded latents -> pixels
+  sample_steps: 50
+  video_fps: 8
