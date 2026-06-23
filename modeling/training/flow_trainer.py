@@ -26,12 +26,14 @@ from modeling import flow_matching as fm
 
 
 class FlowTrainer:
-    def __init__(self, cfg, model: nn.Module, train_loader, val_loader=None):
+    def __init__(self, cfg, model: nn.Module, train_loader, val_loader=None, decode_fn=None):
         self.cfg = cfg
         self.device = self._resolve_device(cfg.device)
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
+        # latent mode: maps a (F, C, h, w) latent clip -> (T_pix, 3, H, W) pixels for video logging
+        self.decode_fn = decode_fn
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=float(cfg.optim.lr),
@@ -172,8 +174,11 @@ class FlowTrainer:
             f = frames.shape[1]
             steps = int(self.cfg.logger.get("sample_steps", 50))
             clip = fm.euler_rollout(self.model, frames[:, :ctx], actions, f - ctx, num_steps=steps)
+            gt, pred = frames[0], clip[0]
+            if self.decode_fn is not None:  # latent mode: decode latents -> pixels first
+                gt, pred = self.decode_fn(gt), self.decode_fn(pred)
             # stack GT (top) over prediction (bottom) -> (T, 2H, W, C) uint8 RGB
-            vid = torch.cat([frames[0], clip[0]], dim=2).clamp(-1, 1)
+            vid = torch.cat([gt, pred], dim=2).clamp(-1, 1)
             vid = ((vid + 1) / 2 * 255).round().to(torch.uint8)
             vid = vid.permute(0, 2, 3, 1).contiguous().cpu().numpy()  # (T, 2H, W, C) RGB
             path = self._write_mp4(vid, epoch, fps=int(self.cfg.logger.get("video_fps", 8)))

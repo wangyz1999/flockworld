@@ -3,7 +3,7 @@ output_dir: output/train_vae           # run dir = {output_dir}/{YYYYMMDD-HHMMSS
 experiment_name: wan_vae_partial
 
 data:
-  root: data/recording/20260526_090139
+  root: data/recording/20260617_152532
   val_fraction: 0.1
   num_frames: 17            # Must be 1 + 4k for WanVAE chunking. 5 = 1 anchor + 1 chunk of 4 frames.
   frame_stride: 1

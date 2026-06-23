@@ -103,7 +103,10 @@ class FlockingDiTMultiDataset(FlockingVideoDataset):
 
 
 def build_dit_dataloader(cfg, split: str) -> DataLoader:
-    """Build a single- or multi-agent DiT dataloader from an OmegaConf config."""
+    """Build a DiT dataloader: latent, single-, or multi-agent (per config)."""
+    if bool(cfg.data.get("latent", False)):
+        from modeling.data.flocking_latent_dataset import build_latent_dataloader
+        return build_latent_dataloader(cfg, split)
     data = cfg.data
     num_agents = int(data.get("num_agents", 1))
     random_clip = bool(data.get("random_clip", True)) and split == "train"

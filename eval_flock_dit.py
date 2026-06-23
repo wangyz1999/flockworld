@@ -105,6 +105,12 @@ def main():
     model.load_state_dict(state["model"])
     model.eval()
 
+    # latent mode: decode latents -> pixels for the saved videos (MSE stays in latent space)
+    decode_fn = None
+    if bool(cfg.data.get("latent", False)):
+        from train_flock_dit import build_decode_fn
+        decode_fn = build_decode_fn(cfg)
+
     ds = FlockingDiTDataset(
         root=cfg.data.root,
         split="val",
@@ -121,6 +127,8 @@ def main():
     n = min(int(args.num_episodes), len(ds))
     out_dir = Path(cfg.output_dir) / "eval"
     out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("rollout_*.mp4"):  # clear prior eval's videos so runs don't pile up
+        old.unlink()
     fps = int(cfg.logger.get("video_fps", 8)) if cfg.get("logger") else 8
 
     roll_mses, base_mses = [], []
@@ -140,8 +148,11 @@ def main():
         roll_mses.append(roll)
         base_mses.append(base)
 
-        # GT (top) over prediction (bottom)
-        vid = torch.cat([frames[0], clip[0]], dim=2).clamp(-1, 1)
+        # GT (top) over prediction (bottom); decode latents -> pixels in latent mode
+        gt, pred = frames[0], clip[0]
+        if decode_fn is not None:
+            gt, pred = decode_fn(gt), decode_fn(pred)
+        vid = torch.cat([gt, pred], dim=2).clamp(-1, 1)
         vid = ((vid + 1) / 2 * 255).round().to(torch.uint8).permute(0, 2, 3, 1).contiguous().cpu().numpy()
         write_mp4(vid, out_dir / f"rollout_{i:02d}_ep{s['episode_id']}_a{s['agent_index']}.mp4", fps)
         print(f"{i:>4} {s['episode_id']:>8} {s['agent_index']:>5} {roll:>12.5f} {base:>13.5f}")
