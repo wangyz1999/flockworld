@@ -210,6 +210,7 @@ __marimo__/
 /output/
 /data/
 /pretrained/
+/wandb/
 
 # Un-ignore our package's env submodule (matched by env/ above)
 !flockworld/env/
