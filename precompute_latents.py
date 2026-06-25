@@ -33,10 +33,45 @@ def aggregate_actions(actions: torch.Tensor, t_lat: int) -> torch.Tensor:
     return torch.stack([g.mean(0) for g in groups])
 
 
+def parse_shard(spec: str, n_total: int) -> tuple[int, int]:
+    """'i/N' (0-based) -> (i, N). Shard i processes samples[i::N] (strided, balanced)."""
+    i_str, n_str = spec.split("/")
+    i, n = int(i_str), int(n_str)
+    if not (0 <= i < n):
+        raise ValueError(f"--shard {spec}: need 0 <= i < N")
+    return i, n
+
+
+def compute_stats(cache_dir: Path, z_dim: int) -> None:
+    """Scan every cached latent file and (re)write stats.pt. Used after sharded runs."""
+    csum = torch.zeros(z_dim, dtype=torch.float64)
+    csq = torch.zeros(z_dim, dtype=torch.float64)
+    count = 0
+    files = sorted(cache_dir.glob("ep*_a*.pt"))
+    print(f"computing stats over {len(files)} cached files...")
+    for j, p in enumerate(files):
+        z = torch.load(p, map_location="cpu")["latents"].float().reshape(z_dim, -1)
+        csum += z.sum(1).double()
+        csq += (z * z).sum(1).double()
+        count += z.shape[1]
+        if (j + 1) % 5000 == 0:
+            print(f"  stats {j + 1}/{len(files)}")
+    mean = (csum / count).float()
+    std = (csq / count - (csum / count) ** 2).clamp_min(1e-8).sqrt().float()
+    torch.save({"mean": mean, "std": std}, cache_dir / "stats.pt")
+    print(f"per-channel latent mean={mean.tolist()}")
+    print(f"per-channel latent std ={std.tolist()}")
+    print(f"wrote {cache_dir / 'stats.pt'}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Cache VAE latents for FlockDiT latent-space training.")
     ap.add_argument("--config", required=True)
     ap.add_argument("--limit", type=int, default=None, help="cap (episode,agent) count (debug)")
+    ap.add_argument("--shard", default=None, help="'i/N' (0-based): this process encodes samples[i::N]. "
+                    "Run N processes in parallel, then '--stats-only' once to write stats.pt.")
+    ap.add_argument("--stats-only", action="store_true",
+                    help="skip encoding; (re)compute stats.pt from all cached files (run after shards).")
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
 
@@ -46,6 +81,11 @@ def main():
     img = tuple(int(v) for v in cfg.vae.get("encode_image_size", [128, 128]))
     cache_dir = Path(cfg.data.root) / cfg.data.get("latent_cache_dir", "latent_cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    z_dim = vae.z_dim
+
+    if args.stats_only:
+        compute_stats(cache_dir, z_dim)
+        return
 
     # enumerate all (episode, agent) over both splits; reuse one ds for action loading
     ds_ref = None
@@ -62,14 +102,24 @@ def main():
         samples.extend(ds.samples)
     if args.limit:
         samples = samples[: args.limit]
-    print(f"caching latents for {len(samples)} (episode,agent) samples -> {cache_dir}")
+    n_all = len(samples)
+    shard = parse_shard(args.shard, n_all) if args.shard else None
+    if shard is not None:
+        i, n = shard
+        samples = samples[i::n]
+        print(f"[shard {i}/{n}] caching {len(samples)} of {n_all} samples -> {cache_dir}")
+    else:
+        print(f"caching latents for {len(samples)} (episode,agent) samples -> {cache_dir}")
 
-    z_dim = vae.z_dim
     csum = torch.zeros(z_dim, dtype=torch.float64)
     csq = torch.zeros(z_dim, dtype=torch.float64)
     count = 0
+    skipped = 0
     for i, s in enumerate(samples):
         out_path = cache_dir / f"ep{s.episode_id}_a{s.agent_index}.pt"
+        if out_path.exists():  # resumable: don't re-encode existing files
+            skipped += 1
+            continue
         reader = VideoReader(str(s.partial_video), ctx=cpu(0), num_threads=1)
         n = len(reader)
         frames = torch.from_numpy(reader.get_batch(list(range(n))).asnumpy())  # (P,H,W,3)
@@ -91,14 +141,22 @@ def main():
         csq += (zf * zf).sum(1).double()
         count += zf.shape[1]
         if (i + 1) % 100 == 0 or i + 1 == len(samples):
-            print(f"  {i + 1}/{len(samples)}  latest T_lat={t_lat}")
+            print(f"  {i + 1}/{len(samples)}  latest T_lat={t_lat}  (skipped {skipped})")
 
-    mean = (csum / count).float()
-    std = (csq / count - (csum / count) ** 2).clamp_min(1e-8).sqrt().float()
-    torch.save({"mean": mean, "std": std}, cache_dir / "stats.pt")
-    print(f"per-channel latent mean={mean.tolist()}")
-    print(f"per-channel latent std ={std.tolist()}")
-    print(f"done -> {cache_dir}  ({len(samples)} files + stats.pt)")
+    # Inline stats are correct only for a single full pass with nothing skipped.
+    # Sharded or resumed runs must recompute globally with `--stats-only`.
+    if shard is None and skipped == 0:
+        mean = (csum / count).float()
+        std = (csq / count - (csum / count) ** 2).clamp_min(1e-8).sqrt().float()
+        torch.save({"mean": mean, "std": std}, cache_dir / "stats.pt")
+        print(f"per-channel latent mean={mean.tolist()}")
+        print(f"per-channel latent std ={std.tolist()}")
+        print(f"done -> {cache_dir}  ({len(samples)} files + stats.pt)")
+    else:
+        why = "sharded" if shard is not None else f"{skipped} skipped"
+        print(f"done -> {cache_dir} ({why}). Now run once to write stats.pt:\n"
+              f"  uv run python precompute_latents.py --config {args.config} --stats-only "
+              + (" ".join(args.overrides) if args.overrides else ""))
 
 
 if __name__ == "__main__":
