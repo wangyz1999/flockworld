@@ -83,6 +83,22 @@ class FlockingLatentDataset(Dataset):
             "agent_index": d["agent_index"],
         }
 
+    def full_episode(self, index: int) -> dict:
+        """Whole normalized latent trajectory + all actions (for long AR rollout).
+
+        Unlike __getitem__ (a single window), this returns every latent frame so
+        a sliding-window rollout can run far past the trained clip length.
+        """
+        d = torch.load(self.files[index], map_location="cpu")
+        z = (d["latents"].float() - self.mean) / self.std  # (z_dim, T_lat, h, w)
+        return {
+            "frames": z.permute(1, 0, 2, 3).contiguous(),  # (T_lat, z_dim, h, w)
+            "actions": d["actions"].float(),               # (T_lat, A)
+            "context_len": self.num_context,
+            "episode_id": d["episode_id"],
+            "agent_index": d["agent_index"],
+        }
+
 
 def build_latent_dataloader(cfg, split: str) -> DataLoader:
     data = cfg.data

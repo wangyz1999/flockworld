@@ -109,3 +109,45 @@ def euler_rollout(
         # dx/dsigma = v  =>  x <- x + d_sigma * v   (Euler step)
         x[:, fc:] = x[:, fc:] + d_sigma * v[:, fc:]
     return x
+
+
+@torch.no_grad()
+def autoregressive_rollout(
+    model,
+    context_frames: torch.Tensor,
+    actions: torch.Tensor,
+    num_total: int,
+    window_future: int = 4,
+    num_steps: int = 50,
+) -> torch.Tensor:
+    """Long-horizon rollout by sliding the trained fixed-size window.
+
+    The model was trained on a fixed ``Fc + window_future``-frame clip, so to
+    predict beyond that we generate ``window_future`` frames, then re-use the
+    last ``Fc`` frames of the running sequence as the next context and repeat.
+    Every model call therefore stays at the in-distribution clip length; the only
+    out-of-distribution part is that the context becomes the model's own
+    (imperfect) predictions -- that feedback is the source of long-rollout drift.
+
+    Args:
+        context_frames: ``(B, Fc, C, H, W)`` clean initial context.
+        actions:        ``(B, T, A)`` per-frame actions covering the full horizon
+                        (``T`` must reach at least ``num_total``).
+        num_total:      target sequence length (context + generated).
+        window_future:  frames generated per slide (match training future count).
+    Returns ``(B, num_total, C, H, W)``.
+    """
+    model.eval()
+    fc = context_frames.shape[1]
+    seq = context_frames
+    while seq.shape[1] < num_total:
+        start = seq.shape[1] - fc                        # abs index of the context's first frame
+        avail_future = actions.shape[1] - (start + fc)   # future actions still available
+        n_future = min(window_future, avail_future)
+        if n_future <= 0:
+            break  # ran out of actions before reaching num_total
+        ctx = seq[:, -fc:]
+        win_actions = actions[:, start:start + fc + n_future]
+        clip = euler_rollout(model, ctx, win_actions, n_future, num_steps=num_steps)
+        seq = torch.cat([seq, clip[:, fc:]], dim=1)
+    return seq[:, :num_total]
