@@ -100,10 +100,65 @@ class FlockingLatentDataset(Dataset):
         }
 
 
+class FlockingLatentMultiDataset(FlockingLatentDataset):
+    """Multi-agent latent: returns ``frames (P, L, z_dim, h, w)`` + ``actions (P, L, A)``.
+
+    Groups the split's cached files by episode and keeps the first ``num_agents``
+    agents (sorted by agent index). All agents share one sampled latent window so
+    their views are temporally aligned -- the layout the multi-agent FlockDiT path
+    expects (``x: (B, P, F, C, H, W)``).
+    """
+
+    def __init__(self, *args, num_agents: int = 2, **kwargs):
+        self.num_agents = int(num_agents)
+        super().__init__(*args, **kwargs)
+        ep_of = lambda p: p.name.split("_a")[0]          # "ep00000"
+        ag_of = lambda p: int(p.stem.split("_a")[1])     # 1..10 (int, not string-sorted)
+        by_episode: dict[str, list] = {}
+        for p in self.files:
+            by_episode.setdefault(ep_of(p), []).append(p)
+        self.episodes = [
+            sorted(v, key=ag_of)[: self.num_agents]
+            for v in by_episode.values()
+            if len(v) >= self.num_agents
+        ]
+        if not self.episodes:
+            raise ValueError(
+                f"No episodes with >= {self.num_agents} cached agents in {self.cache_dir}"
+            )
+
+    def __len__(self) -> int:
+        return len(self.episodes)
+
+    def __getitem__(self, index: int) -> dict:
+        paths = self.episodes[index]
+        ds = [torch.load(p, map_location="cpu") for p in paths]
+        zs = [d["latents"].float() for d in ds]              # each (z_dim, T_lat, h, w)
+        t_lat = min(z.shape[1] for z in zs)
+        if t_lat < self.window:
+            raise ValueError(
+                f"episode {ds[0]['episode_id']} has {t_lat} latent frames < window {self.window}"
+            )
+        s = self._start(t_lat, index)                        # one shared window for all agents
+        frames, actions = [], []
+        for d, z in zip(ds, zs):
+            zz = (z[:, s:s + self.window] - self.mean) / self.std      # (z_dim, L, h, w)
+            frames.append(zz.permute(1, 0, 2, 3).contiguous())        # (L, z_dim, h, w)
+            actions.append(d["actions"].float()[s:s + self.window])   # (L, A)
+        return {
+            "frames": torch.stack(frames, dim=0),     # (P, L, z_dim, h, w)
+            "actions": torch.stack(actions, dim=0),   # (P, L, A)
+            "context_len": self.num_context,
+            "episode_id": ds[0]["episode_id"],
+            "agent_indices": [d["agent_index"] for d in ds],
+        }
+
+
 def build_latent_dataloader(cfg, split: str) -> DataLoader:
     data = cfg.data
     cache_dir = Path(data.root) / data.get("latent_cache_dir", "latent_cache")
-    dataset = FlockingLatentDataset(
+    num_agents = int(data.get("num_agents", 1))
+    common = dict(
         cache_dir=cache_dir,
         split=split,
         val_fraction=data.val_fraction,
@@ -112,6 +167,10 @@ def build_latent_dataloader(cfg, split: str) -> DataLoader:
         random_clip=bool(data.get("random_clip", True)) and split == "train",
         split_seed=cfg.seed,
     )
+    if num_agents > 1:
+        dataset = FlockingLatentMultiDataset(num_agents=num_agents, **common)
+    else:
+        dataset = FlockingLatentDataset(**common)
     nw = int(cfg.dataloader.num_workers)
     return DataLoader(
         dataset,

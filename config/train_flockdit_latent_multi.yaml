@@ -1,0 +1,67 @@
+seed: 42
+device: auto
+output_dir: output/flock_dit_latent_multi      # isolated from single-agent runs
+experiment_name: flock_dit_latent_multi
+
+# Multi-agent latent world model (Setup 1: no color, no background gradient).
+# Same code as the single-agent latent run, selected by data.num_agents > 1.
+# Runs on the EXISTING 10k latent cache -- no data regen, no VAE retrain.
+
+data:
+  root: data/recording/20260623_135735   # 10k dataset (largest); has latent_cache + stats.pt
+  latent: true
+  latent_cache_dir: latent_cache
+  val_fraction: 0.1
+  num_context_frames: 2           # LATENT frames (each ~= 4 pixel frames)
+  num_future_frames: 4            # 6 total ~= 21 pixel frames of motion
+  num_agents: 10                  # P: all 10 agents per episode interleaved (Solaris token interleaving)
+  action_features:
+    - acc_x
+    - acc_y
+  random_clip: true
+
+vae:
+  checkpoint_path: pretrained/last.ckpt
+  encode_image_size: [128, 128]
+
+dataloader:
+  # P=10 makes each sample ~10x the tokens of single-agent (6*10*64=3840 vs 384),
+  # so attention/memory cost is much higher -- start small. Bump if it fits, drop if OOM.
+  batch_size: 4
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  in_channels: 8                  # z_dim
+  out_channels: 8
+  patch: 1                        # 8x8 latent -> 64 tokens/frame
+  patch_t: 1
+  dim: 512
+  depth: 8
+  heads: 8
+  ffn_dim: 2048
+  local_attn_size: -1
+  # num_agents is read from data.num_agents at build time (drives agent_embed size)
+
+optim:
+  lr: 0.0002
+  weight_decay: 0.000001
+
+train:
+  epochs: 100
+  log_every: 20
+  save_every: 1
+  grad_clip_norm: 1.0
+  amp: true
+
+logger:
+  use_wandb: true
+  wandb_project: flock-world-model
+  wandb_entity: null
+  # NOTE: the trainer's in-training rollout video is single-agent only, so a multi-agent
+  # run logs losses but no video; the cross-view consistency eval is a separate tool (TODO).
+  log_sample_every: 0
+  sample_steps: 50
+  video_fps: 8
