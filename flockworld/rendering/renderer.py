@@ -56,7 +56,7 @@ def _hsv_to_rgb(h, s, v):
     static_argnames=("height", "width", "patch_radius", "color_mode", "border_width"),
 )
 def _render_frame_js_dart(
-    positions, velocities, agent_color, background_color,
+    positions, velocities, agent_color, boid_colors, background_image,
     height: int, width: int,
     agent_size, max_speed, alpha, aa_blur,
     patch_radius: int,
@@ -76,7 +76,9 @@ def _render_frame_js_dart(
     speed = jnp.sqrt(jnp.sum(velocities ** 2, axis=-1))
     if color_mode == "fixed":
         colors = jnp.broadcast_to(agent_color[None, :], (positions.shape[0], 3))
-    else:
+    elif color_mode == "agent_id":
+        colors = boid_colors  # (N, 3) precomputed per-boid identity colors
+    else:  # "speed"
         hue = jnp.clip(speed / (max_speed * 2.0), 0.0, 1.0)
         colors = _hsv_to_rgb(hue, 1.0, 1.0)
     headings = jnp.arctan2(velocities[:, 1], velocities[:, 0])
@@ -126,8 +128,9 @@ def _render_frame_js_dart(
     )
 
     avg_rgb = rgb_sum / jnp.maximum(alpha_sum[:, None], 1e-6)
+    bg_flat = background_image.reshape((height * width, 3))  # per-pixel bg (gradient or constant)
     image = (
-        background_color[None, :] * trans[:, None]
+        bg_flat * trans[:, None]
         + avg_rgb * (1.0 - trans[:, None])
     )
     image = jnp.clip(image.reshape((height, width, 3)), 0.0, 1.0)
@@ -143,7 +146,7 @@ def render_frame(
     positions, velocities,
     uv_grid,
     agent_size, agent_render_radius,
-    agent_color, background_color,
+    agent_color, boid_colors, background_image,
     aa_blur,
     max_speed, boid_alpha,
     color_mode,
@@ -152,7 +155,7 @@ def render_frame(
     """Render a complete (H, W, 3) float32 frame."""
     image_h, image_w = uv_grid.shape[:2]
     return _render_frame_js_dart(
-        positions, velocities, agent_color, background_color,
+        positions, velocities, agent_color, boid_colors, background_image,
         image_h, image_w,
         agent_size, max_speed, boid_alpha, aa_blur,
         agent_render_radius,

@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 from flockworld.core.types import BoidState, EnvState
 from flockworld.core.boids import compute_boid_steering, update_boids
-from flockworld.rendering.renderer import render_frame
+from flockworld.rendering.renderer import render_frame, _hsv_to_rgb
 
 
 @dataclass(frozen=True)
@@ -48,10 +48,19 @@ class EnvConfig:
     dt: float
     border_width: int
     border_color: tuple
+    num_camera_agents: int      # first N boids get identity colors in "agent_id" mode
+    background_gradient: bool
+    gradient_brightness: float
 
 
 def env_config_from_omega(cfg) -> EnvConfig:
     """Build an ``EnvConfig`` from a full OmegaConf DictConfig."""
+    collection = cfg.get("collection", None)
+    num_camera_agents = (
+        int(collection.partial_agents)
+        if collection is not None and collection.get("partial_agents", None) is not None
+        else int(cfg.boids.num_agents)
+    )
     return EnvConfig(
         device=cfg.device,
         canvas_w=cfg.canvas.width,
@@ -80,6 +89,9 @@ def env_config_from_omega(cfg) -> EnvConfig:
         boid_alpha=cfg.rendering.boid_alpha,
         border_width=int(cfg.rendering.get("border_width", 0)),
         border_color=tuple(cfg.rendering.get("border_color", (1.0, 1.0, 1.0))),
+        num_camera_agents=num_camera_agents,
+        background_gradient=bool(cfg.rendering.get("background_gradient", False)),
+        gradient_brightness=float(cfg.rendering.get("gradient_brightness", 0.3)),
     )
 
 
@@ -121,6 +133,34 @@ class EnvParams:
         self.color_mode = ec.color_mode
         self.border_width = int(ec.border_width)
         self.border_color = jnp.array(ec.border_color, dtype=jnp.float32)
+
+        # Per-boid identity colors (used only when color_mode == "agent_id"): the
+        # first num_camera_agents boids get evenly-spaced hues at full S,V; the rest
+        # stay white. So the camera agents are individually identifiable by hue.
+        n_cam = min(int(ec.num_camera_agents), int(ec.num_agents))
+        if ec.color_mode == "agent_id" and n_cam > 0:
+            hues = jnp.arange(n_cam, dtype=jnp.float32) / float(n_cam)
+            cam = _hsv_to_rgb(hues, jnp.ones(n_cam), jnp.ones(n_cam))          # (n_cam, 3)
+            rest = jnp.ones((int(ec.num_agents) - n_cam, 3), dtype=jnp.float32)
+            self.boid_colors = jnp.concatenate([cam, rest], axis=0)
+        else:
+            self.boid_colors = jnp.ones((int(ec.num_agents), 3), dtype=jnp.float32)
+
+        # Background image (H, W, 3): a dim position-encoding gradient, or a constant.
+        # Gradient: pixel (x, y) -> gradient_brightness * (x/(W-1), y/(H-1), 0), so the
+        # Red channel encodes x and Green encodes y (decode in eval: x = R/brightness*(W-1)).
+        if ec.background_gradient:
+            xs = jnp.linspace(0.0, 1.0, int(ec.canvas_w))
+            ys = jnp.linspace(0.0, 1.0, int(ec.canvas_h))
+            xv, yv = jnp.meshgrid(xs, ys)                                      # (H, W)
+            self.background_image = (
+                jnp.stack([xv, yv, jnp.zeros_like(xv)], axis=-1)
+                * jnp.float32(ec.gradient_brightness)
+            ).astype(jnp.float32)
+        else:
+            self.background_image = jnp.broadcast_to(
+                self.background_color, (int(ec.canvas_h), int(ec.canvas_w), 3)
+            )
 
 
 # ── reset / step ────────────────────────────────────────────────────────
@@ -203,7 +243,7 @@ def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
         uv_grid,
         p.agent_size,
         p.agent_render_radius,
-        p.agent_color, p.background_color,
+        p.agent_color, p.boid_colors, p.background_image,
         p.aa_blur,
         p.max_speed, p.boid_alpha,
         p.color_mode,
