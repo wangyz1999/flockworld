@@ -151,3 +151,81 @@ def autoregressive_rollout(
         clip = euler_rollout(model, ctx, win_actions, n_future, num_steps=num_steps)
         seq = torch.cat([seq, clip[:, fc:]], dim=1)
     return seq[:, :num_total]
+
+
+@torch.no_grad()
+def multi_euler_rollout(
+    model,
+    context_frames: torch.Tensor,
+    actions: torch.Tensor,
+    num_future: int,
+    num_steps: int = 50,
+) -> torch.Tensor:
+    """Multi-agent Euler ODE rollout -- the player-axis analogue of ``euler_rollout``.
+
+    All ``P`` agents share one time window, so the future frames are generated
+    jointly: the model interleaves the P streams and cross-agent attention is
+    active at every step. The frame axis is dim 2 (``(B, P, F, C, H, W)``);
+    context frames are held clean (sigma=0) throughout.
+
+    Args:
+        context_frames: ``(B, P, Fc, C, H, W)`` clean context in ``[-1, 1]``.
+        actions:        ``(B, P, Fc+num_future, A)`` per-agent per-frame actions.
+        num_future:     number of frames to generate.
+    Returns the full clip ``(B, P, Fc+num_future, C, H, W)``.
+    """
+    model.eval()
+    b, p, fc, c, h, w = context_frames.shape
+    f = fc + num_future
+    device = context_frames.device
+
+    x = torch.cat(
+        [context_frames, torch.randn(b, p, num_future, c, h, w, device=device)], dim=2
+    )
+    sigmas = torch.linspace(1.0, 0.0, num_steps + 1, device=device)
+    for i in range(num_steps):
+        sigma, sigma_next = sigmas[i], sigmas[i + 1]
+        d_sigma = sigma_next - sigma
+        t = torch.zeros(b, p, f, device=device)
+        t[:, :, fc:] = sigma * T_MAX
+        v = model(x, t, actions)  # (B, P, F, C, H, W)
+        x[:, :, fc:] = x[:, :, fc:] + d_sigma * v[:, :, fc:]
+    return x
+
+
+@torch.no_grad()
+def multi_autoregressive_rollout(
+    model,
+    context_frames: torch.Tensor,
+    actions: torch.Tensor,
+    num_total: int,
+    window_future: int = 4,
+    num_steps: int = 50,
+) -> torch.Tensor:
+    """Long-horizon multi-agent rollout -- the player-axis analogue of
+    ``autoregressive_rollout``. Slides the trained window forward over the shared
+    frame axis (dim 2); all P agents advance together so cross-agent attention is
+    active in every window, and each window's context is the model's own previous
+    P-agent output (the source of drift).
+
+    Args:
+        context_frames: ``(B, P, Fc, C, H, W)`` clean initial context.
+        actions:        ``(B, P, T, A)`` per-agent actions covering the full horizon.
+        num_total:      target sequence length (context + generated).
+        window_future:  frames generated per slide (match training future count).
+    Returns ``(B, P, num_total, C, H, W)``.
+    """
+    model.eval()
+    fc = context_frames.shape[2]
+    seq = context_frames
+    while seq.shape[2] < num_total:
+        start = seq.shape[2] - fc                          # abs index of context's first frame
+        avail_future = actions.shape[2] - (start + fc)
+        n_future = min(window_future, avail_future)
+        if n_future <= 0:
+            break
+        ctx = seq[:, :, -fc:]
+        win_actions = actions[:, :, start:start + fc + n_future]
+        clip = multi_euler_rollout(model, ctx, win_actions, n_future, num_steps=num_steps)
+        seq = torch.cat([seq, clip[:, :, fc:]], dim=2)
+    return seq[:, :, :num_total]
