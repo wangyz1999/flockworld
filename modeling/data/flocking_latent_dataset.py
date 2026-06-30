@@ -153,6 +153,29 @@ class FlockingLatentMultiDataset(FlockingLatentDataset):
             "agent_indices": [d["agent_index"] for d in ds],
         }
 
+    def full_episode(self, index: int) -> dict:
+        """Whole normalized latent trajectories for all P agents of one episode.
+
+        Multi-agent analogue of FlockingLatentDataset.full_episode: returns every
+        latent frame (not a window) so a sliding-window rollout can run the full
+        episode's P views. All agents share the same length (same episode).
+        """
+        paths = self.episodes[index]
+        ds = [torch.load(p, map_location="cpu") for p in paths]
+        zs, acts = [], []
+        for d in ds:
+            z = (d["latents"].float() - self.mean) / self.std     # (z_dim, T_lat, h, w)
+            zs.append(z.permute(1, 0, 2, 3).contiguous())         # (T_lat, z_dim, h, w)
+            acts.append(d["actions"].float())                     # (T_lat, A)
+        t = min(z.shape[0] for z in zs)                            # robust to any length mismatch
+        return {
+            "frames": torch.stack([z[:t] for z in zs], dim=0),    # (P, T_lat, z_dim, h, w)
+            "actions": torch.stack([a[:t] for a in acts], dim=0), # (P, T_lat, A)
+            "context_len": self.num_context,
+            "episode_id": ds[0]["episode_id"],
+            "agent_indices": [d["agent_index"] for d in ds],
+        }
+
 
 def build_latent_dataloader(cfg, split: str) -> DataLoader:
     data = cfg.data
