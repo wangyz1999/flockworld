@@ -44,16 +44,21 @@ def _blob_hue(f: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
 
 
 def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
-                 max_elong: float = 5.0, max_extent: int = 40) -> dict:
+                 max_elong: float = 5.0, max_extent: int = 40,
+                 border_px: int = 5, border_min_size: int = 25) -> dict:
     """Find darts in one RGB frame.
 
-    Boids render as compact blobs (bbox elongation ~1.4, extent ~13px); the white
-    world border renders as a thin straight LINE (elongation up to ~128) or an
-    L-shaped corner (huge extent). So after thresholding + connected components we
-    reject blobs that are too elongated (``> max_elong``, kills border lines) or
-    too large (``> max_extent`` on the longest bbox side, kills corners) -- both
-    well outside the real-dart range measured on GT frames (elong p99 2.6 / max
-    4.7; extent p99 25). Merged darts stay compact, so they survive.
+    Boids render as compact blobs (bbox elongation ~1.4, extent ~13px, size ~64);
+    the white world border renders as a thin straight LINE (elongation up to ~128),
+    an L-shaped corner (huge extent), or -- where it just clips the crop -- a small
+    compact fragment hugging the frame edge (size ~11). After thresholding +
+    connected components we reject blobs that are:
+      * too elongated (``> max_elong``)      -> border lines,
+      * too large     (``> max_extent``)     -> corners,
+      * small AND on the frame border        -> border-clip fragments,
+    all outside the real-dart range measured on GT frames (elong p99 2.6; extent
+    p99 25; darts median size 64). Merged darts stay compact and interior, so they
+    survive; a half-clipped real boid at the edge is size >~30 so it also survives.
 
     Args:
         frame_rgb: ``(H, W, 3)`` RGB, float in [0,1] or uint8.
@@ -76,7 +81,11 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
     extent = np.maximum(hh, ww)                   # longest bbox side
     elong = extent / np.maximum(np.minimum(hh, ww), 1.0)
     coms = np.asarray(ndimage.center_of_mass(V, lbl, ids))   # (row, col), V-weighted
-    keep = (sizes >= min_size) & (elong <= max_elong) & (extent <= max_extent)   # reject border lines/corners
+    H, W = V.shape
+    on_border = ((coms[:, 1] < border_px) | (coms[:, 1] > W - border_px) |
+                 (coms[:, 0] < border_px) | (coms[:, 0] > H - border_px))
+    keep = ((sizes >= min_size) & (elong <= max_elong) & (extent <= max_extent)   # reject border lines/corners
+            & ~(on_border & (sizes < border_min_size)))                           # + border-clip fragments
     ids, sizes, coms = ids[keep], sizes[keep], coms[keep]
     if len(ids) == 0:
         z = np.zeros((0,), np.float32)
