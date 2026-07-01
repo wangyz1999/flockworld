@@ -43,8 +43,17 @@ def _blob_hue(f: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
     return hues
 
 
-def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2) -> dict:
+def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
+                 max_elong: float = 5.0, max_extent: int = 40) -> dict:
     """Find darts in one RGB frame.
+
+    Boids render as compact blobs (bbox elongation ~1.4, extent ~13px); the white
+    world border renders as a thin straight LINE (elongation up to ~128) or an
+    L-shaped corner (huge extent). So after thresholding + connected components we
+    reject blobs that are too elongated (``> max_elong``, kills border lines) or
+    too large (``> max_extent`` on the longest bbox side, kills corners) -- both
+    well outside the real-dart range measured on GT frames (elong p99 2.6 / max
+    4.7; extent p99 25). Merged darts stay compact, so they survive.
 
     Args:
         frame_rgb: ``(H, W, 3)`` RGB, float in [0,1] or uint8.
@@ -61,8 +70,16 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2) -> dict:
         return {"centroids": np.zeros((0, 2), np.float32), "sizes": z, "hue": z}
     ids = np.arange(1, n + 1)
     sizes = np.asarray(ndimage.sum(np.ones_like(lbl, np.float32), lbl, ids))
+    objs = ndimage.find_objects(lbl)              # per-label bbox slices (label i -> objs[i-1])
+    hh = np.array([s[0].stop - s[0].start for s in objs], np.float32)
+    ww = np.array([s[1].stop - s[1].start for s in objs], np.float32)
+    extent = np.maximum(hh, ww)                   # longest bbox side
+    elong = extent / np.maximum(np.minimum(hh, ww), 1.0)
     coms = np.asarray(ndimage.center_of_mass(V, lbl, ids))   # (row, col), V-weighted
-    keep = sizes >= min_size
+    keep = (sizes >= min_size) & (elong <= max_elong) & (extent <= max_extent)   # reject border lines/corners
     ids, sizes, coms = ids[keep], sizes[keep], coms[keep]
+    if len(ids) == 0:
+        z = np.zeros((0,), np.float32)
+        return {"centroids": np.zeros((0, 2), np.float32), "sizes": z, "hue": z}
     centroids = np.stack([coms[:, 1], coms[:, 0]], axis=-1).astype(np.float32)  # (u, v)
     return {"centroids": centroids, "sizes": sizes.astype(np.float32), "hue": _blob_hue(f, lbl, ids)}
