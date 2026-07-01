@@ -44,6 +44,29 @@ def draw_gt_marks(frames_thwc, positions, agent_world_idx, size=gp.PARTIAL_SIZE,
     return out
 
 
+def draw_detections(frames_thwc, dets_per_frame, size=gp.PARTIAL_SIZE, radius=4, color=(255, 255, 0)):
+    """Draw a ring at every DETECTED blob centroid (the detector's *own* output).
+
+    Unlike ``draw_gt_marks`` (which draws GT-projected positions), this draws what
+    ``boid_detect.detect_boids`` actually found in the frame — so you can eyeball
+    the detector on generated frames. Default colour is yellow to stand apart from
+    the red/green GT marks.
+
+    Args:
+        frames_thwc:    ``(T, H, W, 3)`` uint8 RGB (decoded view, possibly upscaled).
+        dets_per_frame: length-T list; ``dets_per_frame[t]`` = ``(N, 2)`` detected
+                        centroids ``(u=col, v=row)`` in the ORIGINAL ``size``-px frame.
+    Returns a marked copy.
+    """
+    out = frames_thwc.copy()
+    scale = out.shape[1] / size  # support upscaled frames
+    for t in range(min(len(out), len(dets_per_frame))):
+        for u, v in np.asarray(dets_per_frame[t]).reshape(-1, 2):
+            cv2.circle(out[t], (int(round(u * scale)), int(round(v * scale))),
+                       radius, color, 1, lineType=cv2.LINE_AA)
+    return out
+
+
 def tile(views, pad=2, bg=40) -> np.ndarray:
     """List of ``(T, H, W, 3)`` uint8 (same shape) -> one ``(T, gridH, gridW, 3)`` grid."""
     n = len(views)
