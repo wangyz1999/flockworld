@@ -1,19 +1,23 @@
-"""Cross-view consistency (Tier B) + per-view fidelity (Tier A) metrics.
+"""Per-view fidelity (Tier A) + cross-view position-matching helpers.
 
-Tier B is GT-ROBUST: it matches the model's OWN darts **across the two views**
-by implied world position and measures their disagreement, using GT only for the
-camera positions and the co-visible candidate count. So a model rendering a
-plausible-but-not-GT future still scores consistent if both views agree.
+Tier A is GT-ANCHORED fidelity: match detected darts to GT-projected boids ->
+detection rate + position error. It legitimately drops for a divergent model
+(that is what a fidelity axis is for) and is kept separate from consistency.
 
-Tier A is GT-ANCHORED fidelity: match darts to GT-projected boids -> detection
-rate + position error. It legitimately drops for a divergent model (different axis).
+Cross-view CONSISTENCY used to live here as "Tier B", but it leaked GT through
+the camera: it placed each view's darts in world coordinates using ``gt_pos``,
+which conflated genuine cross-view disagreement with per-view camera drift. It
+has been removed in favour of the fully GT-free
+``modeling.eval.pair_consistency`` -- in the colored-agent setup the camera
+agents localize each other, so no GT enters the scoring frame or event selection.
 
-Detections are passed in as ``dets[agent][frame] -> (N,2)`` centroids (decoupled
-from decode/detection). ``cam_idx[a]`` is the 0-based boid index of camera agent a.
+The position-matching helpers below (``implied_world``, ``_in_crop``,
+``match_cross_view``) are GT-free *given* a camera position, and are still used by
+the corner-anchored probe (``probe_step3_quantify.py``), which recovers that
+camera position from rendered walls rather than from GT -- so they stay.
 
-NOTE (deferred refinements): the heading tiebreaker (stage 2 of matching) and a
-proper per-boid temporal std (needs cross-frame tracking) are not in yet — the
-current temporal metric is the std of matched residuals (a variability proxy).
+Detections are ``dets[agent][frame] -> (N,2)`` centroids; ``cam_idx[a]`` is the
+0-based boid index of camera agent a.
 """
 
 from __future__ import annotations
@@ -63,49 +67,6 @@ def match_cross_view(wa: np.ndarray, wb: np.ndarray, max_dist: float = 8.0, amb:
             continue
         pairs.append((i, j))
     return pairs, excl
-
-
-def tier_b(dets, gt_pos: np.ndarray, cam_idx, max_dist: float = 8.0) -> dict:
-    """Cross-view consistency over all camera-agent pairs / frames.
-
-    Args:
-        dets:    dets[agent][frame] -> (N,2) detected centroids (u,v).
-        gt_pos:  (T, num_boids, 2) GT world positions.
-        cam_idx: list of 0-based boid index for each camera agent.
-    Returns a metric dict (see keys below).
-    """
-    P, T = len(cam_idx), gt_pos.shape[0]
-    res_series = {}            # (a,b) -> list of matched residual norms
-    n_matched = n_excl = n_overlap = 0
-    covis_total = covis_frames = total_frames = 0
-    for a in range(P):
-        for b in range(a + 1, P):
-            res_series[(a, b)] = []
-            for t in range(min(T, len(dets[a]), len(dets[b]))):
-                total_frames += 1
-                ax, bx = gt_pos[t, cam_idx[a]], gt_pos[t, cam_idx[b]]
-                wa = implied_world(np.asarray(dets[a][t]), ax)
-                wb = implied_world(np.asarray(dets[b][t]), bx)
-                wa_o, wb_o = wa[_in_crop(wa, bx)], wb[_in_crop(wb, ax)]   # overlap region
-                covis = gp.covisible_boids(gt_pos[t], cam_idx[a], cam_idx[b])[0]
-                covis_total += len(covis)
-                covis_frames += int(len(covis) > 0)
-                pairs, excl = match_cross_view(wa_o, wb_o, max_dist)
-                n_matched += len(pairs); n_excl += excl
-                n_overlap += max(len(wa_o), len(wb_o))
-                for i, j in pairs:
-                    res_series[(a, b)].append(float(np.linalg.norm(wa_o[i] - wb_o[j])))
-    flat = np.array([r for v in res_series.values() for r in v], np.float32)
-    stds = [np.std(v) for v in res_series.values() if len(v) > 1]
-    return {
-        "positional_consistency": float(flat.mean()) if len(flat) else float("nan"),  # mean ‖r‖ (px)
-        "temporal_std": float(np.mean(stds)) if stds else float("nan"),               # variability proxy
-        "correspondence": n_matched / max(n_overlap, 1),    # content completeness (matched / overlap darts)
-        "exclusion_rate": n_excl / max(n_matched + n_excl, 1),
-        "covisibility_rate": covis_frames / max(total_frames, 1),  # frac of pair-frames with a co-visible boid
-        "mean_covisible_per_frame": covis_total / max(total_frames, 1),
-        "n_matched": n_matched,
-    }
 
 
 def tier_a(dets, gt_pos: np.ndarray, cam_idx, max_dist: float = 6.0) -> dict:
