@@ -55,10 +55,24 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(OmegaConf.to_yaml(cfg))
     latent = bool(cfg.data.get("latent", False))
-    print(f"FlockDiT params: {n_params/1e6:.1f}M | num_agents={num_agents} | latent={latent}")
+    st = cfg.data.get("streaming", None)
+    streaming = st is not None and bool(st.get("enabled", False))
+    print(f"FlockDiT params: {n_params/1e6:.1f}M | num_agents={num_agents} | latent={latent} | streaming={streaming}")
 
-    decode_fn = build_decode_fn(cfg) if latent else None
-    FlowTrainer(cfg, model, train_loader, val_loader, decode_fn=decode_fn).fit()
+    stream_encoder = None
+    if streaming:
+        import torch
+        from modeling.models.frozen_vae import FrozenVAE
+        from modeling.data.streaming_flock_dataset import StreamingLatentEncoder
+        dev = "cuda" if (torch.cuda.is_available() and str(cfg.device) != "cpu") else "cpu"
+        vae = FrozenVAE(str(cfg.vae.checkpoint_path), device=dev)
+        stream_encoder = StreamingLatentEncoder(
+            vae, dev, image_size=tuple(cfg.vae.get("encode_image_size", [128, 128])))
+        decode_fn = None  # streaming has no stats.pt; the multi run logs no video anyway
+    else:
+        decode_fn = build_decode_fn(cfg) if latent else None
+    FlowTrainer(cfg, model, train_loader, val_loader, decode_fn=decode_fn,
+                stream_encoder=stream_encoder).fit()
 
 
 def build_decode_fn(cfg):

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, IterableDataset, get_worker_info
+from torch.utils.data import DataLoader, Dataset, IterableDataset, get_worker_info
 
 from modeling.data.streaming_vae_dataset import (
     _TRAIN_NAMESPACE,
@@ -189,6 +189,51 @@ class StreamingLatentEncoder:
             torch.stack([self._agg_actions(acts[b, p], L) for p in range(P)])
             for b in range(B)
         ])                                                          # (B,P,L,A)
-        ctx = batch["context_len"]
-        ctx = int(ctx[0]) if torch.is_tensor(ctx) else int(ctx)
-        return {"frames": z, "actions": lat, "context_len": ctx}
+        # pass context_len through unchanged (the trainer indexes it like any collated field)
+        return {"frames": z, "actions": lat, "context_len": batch["context_len"]}
+
+
+def build_streaming_flock_dataloader(cfg, split: str) -> DataLoader:
+    """DataLoader of streamed world-model **pixel** batches (train=infinite, val=fixed).
+
+    Reads ``cfg.data.streaming.*``; builds one SimClipGenerator from the sim config and
+    wraps it: StreamingFlockDataset (train, spawn workers) or InMemoryFlockDataset (val,
+    main process). The trainer turns the pixel batches into latents via
+    StreamingLatentEncoder. num_frames should give L = num_context + num_future latent
+    frames (L = 1 + (num_frames-1)//4).
+    """
+    from modeling.data.streaming_vae_dataset import SimClipGenerator, load_sim_cfg_container
+
+    s = cfg.data.streaming
+    P = int(cfg.data.num_agents)
+    num_context = int(cfg.data.num_context_frames)
+    nw = int(cfg.dataloader.num_workers)
+    gen = SimClipGenerator(
+        load_sim_cfg_container(str(s.sim_config), list(s.get("sim_overrides", []))),
+        num_frames=int(s.num_frames),
+        frame_stride=int(s.get("frame_stride", 1)),
+        num_partial_agents=P,
+        windows_per_episode=int(s.get("windows_per_episode", 1)),
+        warmup_steps=int(s.get("warmup_steps", 0)),
+        threads=s.get("threads", None),
+        return_actions=True,
+    )
+    if split == "train":
+        ds = StreamingFlockDataset(
+            gen, windows_per_epoch=int(s.clips_per_epoch),
+            num_agents=P, num_context_lat=num_context, base_seed=int(cfg.seed),
+        )
+        return DataLoader(
+            ds, batch_size=int(cfg.dataloader.batch_size), num_workers=nw,
+            pin_memory=bool(cfg.dataloader.pin_memory),
+            persistent_workers=bool(cfg.dataloader.persistent_workers) and nw > 0,
+            multiprocessing_context="spawn" if nw > 0 else None,  # workers must not inherit JAX/CUDA
+        )
+    val = InMemoryFlockDataset(
+        gen, num_windows=int(s.get("val_windows", 64)),
+        num_context_lat=num_context, base_seed=int(cfg.seed),
+    )
+    return DataLoader(
+        val, batch_size=int(cfg.dataloader.batch_size), shuffle=False,
+        num_workers=0, pin_memory=bool(cfg.dataloader.pin_memory),
+    )

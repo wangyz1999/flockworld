@@ -26,7 +26,8 @@ from modeling import flow_matching as fm
 
 
 class FlowTrainer:
-    def __init__(self, cfg, model: nn.Module, train_loader, val_loader=None, decode_fn=None):
+    def __init__(self, cfg, model: nn.Module, train_loader, val_loader=None, decode_fn=None,
+                 stream_encoder=None):
         self.cfg = cfg
         self.device = self._resolve_device(cfg.device)
         self.model = model.to(self.device)
@@ -34,6 +35,8 @@ class FlowTrainer:
         self.val_loader = val_loader
         # latent mode: maps a (F, C, h, w) latent clip -> (T_pix, 3, H, W) pixels for video logging
         self.decode_fn = decode_fn
+        # streaming mode: turns streamed pixel batches into normalized latent batches on the GPU
+        self.stream_encoder = stream_encoder
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=float(cfg.optim.lr),
@@ -75,7 +78,24 @@ class FlowTrainer:
             return None
         return sample
 
+    def _fit_stream_stats(self):
+        """Streaming only: measure per-channel latent mean/std once from a few fresh batches."""
+        if self.stream_encoder is None or self.stream_encoder.mean is not None:
+            return
+        n = int(self.cfg.data.streaming.get("stats_batches", 4))
+        it = iter(self.train_loader)
+        pix = []
+        for _ in range(n):
+            try:
+                pix.append(next(it)["pixels"])
+            except StopIteration:
+                break
+        self.stream_encoder.fit_stats(pix)
+        print(f"[streaming] latent stats from {len(pix)} batches: "
+              f"mean~{float(self.stream_encoder.mean.mean()):.3f} std~{float(self.stream_encoder.std.mean()):.3f}")
+
     def fit(self):
+        self._fit_stream_stats()
         try:
             for epoch in range(1, int(self.cfg.train.epochs) + 1):
                 train_loss = self._run_epoch(epoch)
@@ -93,6 +113,8 @@ class FlowTrainer:
 
     # -- core flow-matching step ------------------------------------------ #
     def _loss(self, batch) -> torch.Tensor:
+        if self.stream_encoder is not None:                 # streaming: pixels -> normalized latents
+            batch = self.stream_encoder.encode_batch(batch)
         frames = batch["frames"]  # (B,F,C,H,W) or (B,P,F,C,H,W)
         actions = batch["actions"]
         ctx = int(batch["context_len"][0])

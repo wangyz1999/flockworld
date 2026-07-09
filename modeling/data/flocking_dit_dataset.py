@@ -103,7 +103,12 @@ class FlockingDiTMultiDataset(FlockingVideoDataset):
 
 
 def build_dit_dataloader(cfg, split: str) -> DataLoader:
-    """Build a DiT dataloader: latent, single-, or multi-agent (per config)."""
+    """Build a DiT dataloader: streaming, latent, single-, or multi-agent (per config)."""
+    st = cfg.data.get("streaming", None)
+    if st is not None and bool(st.get("enabled", False)):
+        # On-the-fly sim clips (pixels); the trainer VAE-encodes them to latents.
+        from modeling.data.streaming_flock_dataset import build_streaming_flock_dataloader
+        return build_streaming_flock_dataloader(cfg, split)
     if bool(cfg.data.get("latent", False)):
         from modeling.data.flocking_latent_dataset import build_latent_dataloader
         return build_latent_dataloader(cfg, split)
