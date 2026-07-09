@@ -10,6 +10,16 @@ data:
   image_size: [128, 128]
   partial_agent_indices: null   # null -> use every video_a* folder under root.
   overfit_n: null               # int -> cap train & val each to N samples and freeze clip window (overfit smoke test).
+  streaming:                    # generate clips on the fly from the JAX sim -- no disk data, no repeats.
+    enabled: false
+    sim_config: config/data_recording.yaml   # sim/render parameters (canvas, boids, env, rendering).
+    sim_overrides: []           # dotlist overrides for sim_config, e.g. ["boids.num_agents=100"].
+    num_partial_agents: 10      # agent-centred crops taken per frame window.
+    windows_per_episode: 6      # consecutive non-overlapping clip windows per simulated episode.
+    warmup_steps: 60            # sim steps discarded after reset (matches video.warmup in recording).
+    clips_per_epoch: 4096       # fresh clips per training "epoch" (drives val/checkpoint cadence).
+    val_clips: 64               # fixed clips generated once into memory for the val split.
+    threads_per_worker: 2       # XLA intra-op threads per dataloader worker; null = JAX default (all cores).
 
 dataloader:
   batch_size: 32

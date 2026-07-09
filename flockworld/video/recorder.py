@@ -10,6 +10,28 @@ import cv2
 import numpy as np
 
 
+def crop_partial(frame_rgb: np.ndarray, pos: np.ndarray, size: int) -> np.ndarray:
+    """Square ``size`` crop of ``frame_rgb`` centred on ``pos``, zero-padded
+    where the window falls outside the frame."""
+    h, w = frame_rgb.shape[:2]
+    cx = int(round(float(pos[0])))
+    cy = int(round(float(pos[1])))
+    half = size // 2
+    x0 = cx - half
+    y0 = cy - half
+    crop = np.zeros((size, size, frame_rgb.shape[2]), dtype=frame_rgb.dtype)
+    src_x0 = max(0, x0)
+    src_y0 = max(0, y0)
+    src_x1 = min(w, x0 + size)
+    src_y1 = min(h, y0 + size)
+    if src_x1 > src_x0 and src_y1 > src_y0:
+        dst_x0 = src_x0 - x0
+        dst_y0 = src_y0 - y0
+        crop[dst_y0:dst_y0 + (src_y1 - src_y0), dst_x0:dst_x0 + (src_x1 - src_x0)] = \
+            frame_rgb[src_y0:src_y1, src_x0:src_x1]
+    return crop
+
+
 class _FFmpegH264Writer:
     """Writes raw RGB frames to an H.264 mp4 via a piped ffmpeg subprocess.
 
@@ -152,24 +174,7 @@ class VideoRecorder:
         return positions
 
     def _crop_partial(self, frame_rgb: np.ndarray, pos: np.ndarray) -> np.ndarray:
-        size = self.partial_obs_size
-        h, w = frame_rgb.shape[:2]
-        cx = int(round(float(pos[0])))
-        cy = int(round(float(pos[1])))
-        half = size // 2
-        x0 = cx - half
-        y0 = cy - half
-        crop = np.zeros((size, size, frame_rgb.shape[2]), dtype=frame_rgb.dtype)
-        src_x0 = max(0, x0)
-        src_y0 = max(0, y0)
-        src_x1 = min(w, x0 + size)
-        src_y1 = min(h, y0 + size)
-        if src_x1 > src_x0 and src_y1 > src_y0:
-            dst_x0 = src_x0 - x0
-            dst_y0 = src_y0 - y0
-            crop[dst_y0:dst_y0 + (src_y1 - src_y0), dst_x0:dst_x0 + (src_x1 - src_x0)] = \
-                frame_rgb[src_y0:src_y1, src_x0:src_x1]
-        return crop
+        return crop_partial(frame_rgb, pos, self.partial_obs_size)
 
     def __enter__(self):
         return self
