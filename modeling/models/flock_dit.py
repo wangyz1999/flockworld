@@ -12,8 +12,8 @@ adapted for boids:
 * flow-matching objective with frame-level (Diffusion Forcing) timesteps;
 * single-agent and multi-agent share one code path: tokens always carry a
   player axis ``P`` (``P=1`` single-agent) and are interleaved per frame for
-  attention (Solaris token-interleaving), with an additive agent embedding when
-  ``num_agents > 1``.
+  attention (Solaris token-interleaving), with an additive per-layer agent
+  embedding when ``num_agents > 1``.
 
 Faithful-to-Solaris pieces: 3D RoPE split (``rope_apply`` / ``apply_rope_mp``),
 adaLN-zero DiT block (6 modulation params), sinusoidal timestep embedding,
@@ -289,14 +289,19 @@ class FlockDiT(nn.Module):
         tok = rearrange(x, "b p f c h w -> (b p) c f h w")
         tok = self.patch_embed(tok)  # (B*P, dim, F', H', W')
         tok = rearrange(tok, "(b p) c f hh ww -> b f p (hh ww) c", b=b, p=p)
-        if self.num_agents > 1:
-            tok = tok + self.agent_embed(torch.arange(p, device=x.device))[None, None, :, None, :]
+        # Agent identity re-injected before EVERY block (see the loop below), matching
+        # Solaris's per-layer player embedding rather than a single add at the input
+        # (a one-shot embedding washes out over depth, blurring which view is which).
+        agent_bias = (self.agent_embed(torch.arange(p, device=x.device))[None, None, :, None, :]
+                      if self.num_agents > 1 else None)
 
         e0, e_bd = self._modulation(t, actions, b, p, fp)
         freqs = self.rope.grid_freqs(fp, hp, wp).to(tok.device)  # (F*S, hd//2)
         mask = self._block_causal_mask(fp, p * s, x.device)
 
         for block in self.blocks:
+            if agent_bias is not None:
+                tok = tok + agent_bias      # per-layer identity re-injection
             tok = block(tok, e0, freqs, mask)
         out = self.head(tok, e_bd)  # (B, F, P, S, patch_prod*out_c)
 
