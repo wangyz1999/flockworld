@@ -52,6 +52,7 @@ def main():
         num_agents=num_agents,
         local_attn_size=int(m.get("local_attn_size", -1)),
         grad_checkpointing=bool(cfg.train.get("grad_checkpointing", False)),
+        agent_embed_per_layer=bool(m.get("agent_embed_per_layer", False)),
     )
     n_params = sum(p.numel() for p in model.parameters())
     print(OmegaConf.to_yaml(cfg))

@@ -55,6 +55,7 @@ def build_model(cfg) -> FlockDiT:
         action_dim=len(list(cfg.data.action_features)),
         num_agents=int(cfg.data.get("num_agents", 1)),
         local_attn_size=int(m.get("local_attn_size", -1)),
+        agent_embed_per_layer=bool(m.get("agent_embed_per_layer", False)),
     )
 
 
