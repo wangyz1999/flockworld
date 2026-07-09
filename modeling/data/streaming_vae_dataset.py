@@ -53,6 +53,7 @@ class SimClipGenerator:
         windows_per_episode: int,
         warmup_steps: int,
         threads: int | None,
+        return_actions: bool = False,
     ):
         self.sim_cfg_container = sim_cfg_container
         self.num_frames = int(num_frames)
@@ -62,6 +63,8 @@ class SimClipGenerator:
         self.windows_per_episode = int(windows_per_episode)
         self.warmup_steps = int(warmup_steps)
         self.threads = threads
+        # World-model streaming also needs per-frame actions; the VAE path leaves this off.
+        self.return_actions = bool(return_actions)
         self._runtime = None
 
     def _ensure_init(self):
@@ -115,7 +118,11 @@ class SimClipGenerator:
                 next_state, _, _, _ = step(carry, jnp.float32(0.0), params)
                 frame_f = render(next_state, params, uv_grid)
                 frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-                return next_state, (frame_u8, next_state.boids.positions[:num_partial])
+                return next_state, (
+                    frame_u8,
+                    next_state.boids.positions[:num_partial],
+                    next_state.boids.accelerations[:num_partial],  # per-agent (acc_x, acc_y)
+                )
 
             return jax.lax.scan(one, state, None, length=steps)
 
@@ -131,9 +138,12 @@ class SimClipGenerator:
     def clips_per_episode(self) -> int:
         return self.num_partial_agents * self.windows_per_episode
 
-    def episode(self, seed: int) -> np.ndarray:
-        """Simulate one fresh episode and return clips shaped
-        ``(windows * agents, T, size, size, 3)`` uint8 RGB."""
+    def episode(self, seed: int):
+        """Simulate one fresh episode. Returns clips ``(windows*agents, T, size, size, 3)``
+        uint8 RGB. If ``return_actions``, returns ``(clips, actions)`` where actions is
+        ``(windows*agents, T, 2)`` -- each agent's per-frame acceleration ``(acc_x, acc_y)``,
+        the signal the world model conditions on (still at pixel-frame rate; aggregate to
+        latent frames at encode time)."""
         self._ensure_init()
         rt = self._runtime
         size = rt["partial_size"]
@@ -147,14 +157,24 @@ class SimClipGenerator:
             (self.windows_per_episode, self.num_partial_agents, T, size, size, 3),
             dtype=np.uint8,
         )
+        actions = (
+            np.empty((self.windows_per_episode, self.num_partial_agents, T, 2), np.float32)
+            if self.return_actions else None
+        )
         for w in range(self.windows_per_episode):
-            state, (frames, positions) = rt["chunk"](state, self.clip_span)
+            state, (frames, positions, accels) = rt["chunk"](state, self.clip_span)
             frames = np.asarray(frames)          # (span, H, W, 3) uint8
             positions = np.asarray(positions)    # (span, K, 2)
+            accels = np.asarray(accels)          # (span, K, 2)
             for t_out, t in enumerate(range(0, self.clip_span, stride)):
                 for k in range(self.num_partial_agents):
                     clips[w, k, t_out] = crop_partial(frames[t], positions[t, k], size)
-        return clips.reshape(-1, T, size, size, 3)
+                    if actions is not None:
+                        actions[w, k, t_out] = accels[t, k]
+        clips = clips.reshape(-1, T, size, size, 3)
+        if actions is not None:
+            return clips, actions.reshape(-1, T, 2)
+        return clips
 
 
 def _clip_to_item(clip_u8: np.ndarray, image_size, episode_id: str, agent_index: int) -> dict:
