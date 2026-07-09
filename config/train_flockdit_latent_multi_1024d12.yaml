@@ -1,0 +1,66 @@
+seed: 42
+device: auto
+output_dir: output/flock_dit_multi_1024d12      # isolated from the 27M runs
+experiment_name: flock_dit_multi_1024d12
+
+# Bigger multi-agent latent world model: ~160M params (vs the 27M baseline in
+# train_flockdit_latent_multi.yaml), to test whether cross-view consistency is
+# capacity-limited. Only the model width/depth change; everything else matches
+# the baseline config. Measured footprint: ~15.5 GB at batch_size 4, so it fits
+# on a 24 GB GPU with NO memory levers. To go bigger, drop batch_size and turn on
+# train.grad_checkpointing (+ grad_accum_steps to keep the effective batch).
+
+data:
+  root: data/recording/20260623_135735   # override on CLI for the color set (20260702160453)
+  latent: true
+  latent_cache_dir: latent_cache
+  num_context_frames: 2
+  num_future_frames: 4
+  num_agents: 10
+  action_features:
+    - acc_x
+    - acc_y
+  random_clip: true
+
+vae:
+  checkpoint_path: pretrained/last.ckpt   # override on CLI for the color VAE
+  encode_image_size: [128, 128]
+
+dataloader:
+  batch_size: 4
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  in_channels: 8                  # z_dim
+  out_channels: 8
+  patch: 1                        # 8x8 latent -> 64 tokens/frame
+  patch_t: 1
+  dim: 1024                       # 512 -> 1024
+  depth: 12                       # 8 -> 12
+  heads: 16                       # head_dim 64, same as the 27M model (pure width/depth change)
+  ffn_dim: 4096                   # 4 * dim
+  local_attn_size: -1
+
+optim:
+  lr: 0.0002
+  weight_decay: 0.000001
+
+train:
+  epochs: 100
+  log_every: 20
+  save_every: 1
+  grad_clip_norm: 1.0
+  amp: true
+  grad_checkpointing: false       # option A fits without it; set true to scale further
+  grad_accum_steps: 1             # effective batch = batch_size * this
+
+logger:
+  use_wandb: true
+  wandb_project: flock-world-model
+  wandb_entity: null
+  log_sample_every: 0             # multi-agent: log losses only (in-training video is single-agent)
+  sample_steps: 50
+  video_fps: 8
