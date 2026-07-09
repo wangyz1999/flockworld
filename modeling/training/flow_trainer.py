@@ -116,18 +116,23 @@ class FlowTrainer:
     def _run_epoch(self, epoch: int) -> float:
         self.model.train()
         losses: list[float] = []
+        accum = max(1, int(self.cfg.train.get("grad_accum_steps", 1)))  # effective batch = batch_size * accum
+        n_batches = len(self.train_loader)
         iterator = tqdm(self.train_loader, desc=f"train {epoch}", leave=False)
+        self.optimizer.zero_grad(set_to_none=True)
         for step, batch in enumerate(iterator, start=1):
             batch = self._to_device(batch)
-            self.optimizer.zero_grad(set_to_none=True)
             with autocast(device_type=self.device.type, enabled=self.scaler.is_enabled()):
                 loss = self._loss(batch)
-            self.scaler.scale(loss).backward()
-            if float(self.cfg.train.grad_clip_norm) > 0:
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.cfg.train.grad_clip_norm))
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            self.scaler.scale(loss / accum).backward()   # 1/accum -> accumulated grad is the window mean
+
+            if step % accum == 0 or step == n_batches:    # step once per accum micro-batches (+ epoch tail)
+                if float(self.cfg.train.grad_clip_norm) > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.cfg.train.grad_clip_norm))
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad(set_to_none=True)
             self.global_step += 1
 
             losses.append(float(loss.detach().cpu()))
