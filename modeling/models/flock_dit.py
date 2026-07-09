@@ -29,6 +29,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 
 # --------------------------------------------------------------------------- #
@@ -232,6 +233,7 @@ class FlockDiT(nn.Module):
         qk_norm: bool = True,
         eps: float = 1e-6,
         max_seq_len: int = 1024,
+        grad_checkpointing: bool = False,
     ):
         super().__init__()
         assert dim % heads == 0 and (dim // heads) % 2 == 0
@@ -244,6 +246,7 @@ class FlockDiT(nn.Module):
         self.freq_dim = freq_dim
         self.num_agents = num_agents
         self.local_attn_size = local_attn_size
+        self.grad_checkpointing = grad_checkpointing
 
         self.patch_embed = nn.Conv3d(in_channels, dim, kernel_size=self.patch_size, stride=self.patch_size)
         self.time_embedding = nn.Sequential(nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
@@ -302,7 +305,11 @@ class FlockDiT(nn.Module):
         for block in self.blocks:
             if agent_bias is not None:
                 tok = tok + agent_bias      # per-layer identity re-injection
-            tok = block(tok, e0, freqs, mask)
+            if self.grad_checkpointing and self.training:
+                # recompute block activations in backward -> less memory, ~1.3x compute
+                tok = checkpoint(block, tok, e0, freqs, mask, use_reentrant=False)
+            else:
+                tok = block(tok, e0, freqs, mask)
         out = self.head(tok, e_bd)  # (B, F, P, S, patch_prod*out_c)
 
         out = rearrange(
