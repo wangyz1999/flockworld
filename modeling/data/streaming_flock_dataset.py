@@ -120,3 +120,75 @@ class InMemoryFlockDataset(Dataset):
     def __getitem__(self, index: int) -> dict:
         clip_wp, act_wp = self.samples[index]
         return _sample(clip_wp, act_wp, self.num_context)
+
+
+class StreamingLatentEncoder:
+    """Bridge the pixel stream to the latent-space world model, on the GPU.
+
+        {pixels (B,P,T,H,W,3) uint8, actions (B,P,T,A), context_len}
+          -> {frames (B,P,L,z,h,w) normalized latents, actions (B,P,L,A), context_len}
+
+    The frozen VAE runs HERE (main process, GPU), not in the CPU dataloader workers.
+    Streaming has no precompute / ``stats.pt``, so per-channel latent mean/std are
+    computed once via :meth:`fit_stats` from a few calibration batches and reused.
+    """
+
+    def __init__(self, vae, device, image_size=(128, 128)):
+        self.vae = vae
+        self.device = torch.device(device)
+        self.image_size = tuple(image_size)
+        self.z_dim = int(vae.z_dim)
+        self.mean = None   # (1,1,1,z,1,1) after fit_stats
+        self.std = None
+
+    @staticmethod
+    def _agg_actions(actions: torch.Tensor, t_lat: int) -> torch.Tensor:
+        # (T_pix, A) -> (t_lat, A), causal 1+4k groups (matches precompute.aggregate_actions)
+        groups = [actions[0:1]]
+        for i in range(t_lat - 1):
+            groups.append(actions[1 + 4 * i: 1 + 4 * (i + 1)])
+        return torch.stack([g.mean(0) for g in groups])
+
+    @torch.no_grad()
+    def _encode_raw(self, pixels: torch.Tensor) -> torch.Tensor:
+        """(B,P,T,H,W,3) uint8 -> raw (un-normalized) latents (B,P,L,z,h,w)."""
+        B, P, T, H, W, _ = pixels.shape
+        if (H, W) != self.image_size:
+            raise ValueError(f"clip size {(H, W)} != VAE image_size {self.image_size}")
+        x = pixels.to(self.device, torch.float32).div_(255.0).mul_(2.0).sub_(1.0)  # [-1,1]
+        x = x.permute(0, 1, 5, 2, 3, 4).reshape(B * P, 3, T, H, W)                 # (B*P,3,T,H,W)
+        z = self.vae.encode(x)                                                     # (B*P,z,L,h,w)
+        z = z.reshape(B, P, *z.shape[1:])                                          # (B,P,z,L,h,w)
+        return z.permute(0, 1, 3, 2, 4, 5).contiguous()                            # (B,P,L,z,h,w)
+
+    @torch.no_grad()
+    def fit_stats(self, pixel_batches) -> None:
+        """Set per-channel latent mean/std from a few calibration pixel batches."""
+        csum = torch.zeros(self.z_dim, dtype=torch.float64, device=self.device)
+        csq = torch.zeros(self.z_dim, dtype=torch.float64, device=self.device)
+        count = 0
+        for pixels in pixel_batches:
+            zf = self._encode_raw(pixels).permute(3, 0, 1, 2, 4, 5).reshape(self.z_dim, -1).double()
+            csum += zf.sum(1); csq += (zf * zf).sum(1); count += zf.shape[1]
+        mean = (csum / count).float()
+        std = (csq / count - (csum / count) ** 2).clamp_min(1e-8).sqrt().float()
+        self.mean = mean.view(1, 1, 1, -1, 1, 1)
+        self.std = std.view(1, 1, 1, -1, 1, 1)
+
+    @torch.no_grad()
+    def encode_batch(self, batch: dict) -> dict:
+        """Streamed pixel batch -> the (frames, actions, context_len) dict the trainer expects."""
+        if self.mean is None:
+            raise RuntimeError("call fit_stats() before encode_batch()")
+        z = self._encode_raw(batch["pixels"])                       # (B,P,L,z,h,w)
+        z = (z - self.mean.to(z.device)) / self.std.to(z.device)
+        L = z.shape[2]
+        acts = batch["actions"].to(self.device, torch.float32)      # (B,P,T,A)
+        B, P = acts.shape[:2]
+        lat = torch.stack([
+            torch.stack([self._agg_actions(acts[b, p], L) for p in range(P)])
+            for b in range(B)
+        ])                                                          # (B,P,L,A)
+        ctx = batch["context_len"]
+        ctx = int(ctx[0]) if torch.is_tensor(ctx) else int(ctx)
+        return {"frames": z, "actions": lat, "context_len": ctx}
