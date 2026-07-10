@@ -63,6 +63,8 @@ train:
   epochs: 100
   log_every: 20
   save_every: 1
+  save_every_steps: 1000          # mid-epoch step_*.pt checkpoints (0 = off)
+  keep_step_checkpoints: 5        # rotate, keep newest N (0 = keep all)
   grad_clip_norm: 1.0
   amp: true
 

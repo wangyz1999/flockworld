@@ -153,6 +153,9 @@ class FlowTrainer:
             self.global_step += 1
 
             losses.append(float(loss.detach().cpu()))
+            every_steps = int(self.cfg.train.get("save_every_steps", 0))
+            if every_steps > 0 and self.global_step % every_steps == 0:
+                self._save_step_checkpoint(epoch, losses[-every_steps:])
             if step % int(self.cfg.train.log_every) == 0:
                 window = losses[-int(self.cfg.train.log_every):]
                 avg = sum(window) / len(window)
@@ -250,17 +253,37 @@ class FlowTrainer:
 
     def save_checkpoint(self, epoch: int, train_loss: float, val_loss: float | None):
         path = self.checkpoint_dir / f"epoch_{epoch:04d}.pt"
-        torch.save(
-            {
-                "epoch": epoch,
-                "model": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "train_loss": train_loss,
-                "val_loss": val_loss,
-                "config": OmegaConf.to_container(self.cfg.model, resolve=True),
-            },
-            path,
-        )
+        torch.save(self._checkpoint_dict(epoch, train_loss, val_loss), path)
+
+    def _save_step_checkpoint(self, epoch: int, recent_losses: list[float]):
+        """Mid-epoch checkpoint every ``train.save_every_steps`` optimizer steps.
+
+        Lets long streaming runs be evaluated mid-run (point an eval script at a
+        ``step_*.pt``) and bound the work lost to a crash or a manual stop to one
+        save interval. ``train.keep_step_checkpoints > 0`` keeps only the newest N
+        step checkpoints (epoch checkpoints are never rotated); the default (0)
+        keeps them all. ``val_loss`` is None -- no val pass runs mid-epoch -- so
+        eval_flock_dit's best-checkpoint scan (epoch_*.pt only) is unaffected.
+        """
+        train_loss = sum(recent_losses) / max(1, len(recent_losses))
+        path = self.checkpoint_dir / f"step_{self.global_step:08d}.pt"
+        torch.save(self._checkpoint_dict(epoch, train_loss, None), path)
+        keep = int(self.cfg.train.get("keep_step_checkpoints", 0))
+        if keep > 0:
+            # Zero-padded names sort lexicographically == numerically.
+            for old in sorted(self.checkpoint_dir.glob("step_*.pt"))[:-keep]:
+                old.unlink()
+
+    def _checkpoint_dict(self, epoch: int, train_loss: float, val_loss: float | None) -> dict:
+        return {
+            "epoch": epoch,
+            "global_step": self.global_step,
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "config": OmegaConf.to_container(self.cfg.model, resolve=True),
+        }
 
     def _to_device(self, batch: dict):
         return {
