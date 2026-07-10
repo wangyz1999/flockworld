@@ -31,12 +31,15 @@ from modeling.eval import gt_project as gp
 HALF = gp.PARTIAL_SIZE // 2
 
 
-def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.5) -> np.ndarray:
+def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
     """hue (N,) in [0,1) (NaN = white) -> identity boid index (N,), -1 if white/ambiguous.
 
-    A camera dart's hue should be exactly ``ident / n_cam``; assign to the nearest
-    slot and reject when the circular hue error exceeds ``tol / n_cam`` (half a
-    slot by default -> unambiguous nearest).
+    Assign to the nearest palette slot but REJECT (-1) when the circular hue error
+    exceeds ``tol / n_cam``. ``tol`` MUST be < 0.5 to reject anything: rounding already
+    puts every dart within half a slot of its nearest identity, so ``tol=0.5`` (the old
+    default) accepted everything -- forcing noisy off-center darts onto the wrong
+    neighbour and inflating sightings with false positives. ``tol~0.25`` drops darts
+    more than a quarter-slot from a palette hue (i.e. near an identity boundary).
     """
     hue = np.asarray(hue, np.float32)
     ident = np.full(len(hue), -1, np.int64)
@@ -49,7 +52,7 @@ def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.5) -> np.ndarray:
     return ident
 
 
-def _find(view: dict, target: int, n_cam: int):
+def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
     """Pixel ``(u, v)`` of the dart identified as ``target`` in ``view``, or None.
 
     On multiple candidates picks the one whose hue is closest to the exact
@@ -61,7 +64,7 @@ def _find(view: dict, target: int, n_cam: int):
     if len(cents) == 0:
         return None
     hues = np.asarray(view["hue"], np.float32)
-    cand = np.nonzero(_identify(hues, n_cam) == target)[0]
+    cand = np.nonzero(_identify(hues, n_cam, tol) == target)[0]
     if len(cand) == 0:
         return None
     d = np.abs(hues[cand] - target / n_cam)
@@ -102,7 +105,7 @@ def _overlap_whites(wa: np.ndarray, wb: np.ndarray, d_hat: np.ndarray,
     return n_match, max(ca, cb), ca, cb
 
 
-def pair_consistency(dets, cam_idx, n_cam: int, max_dist: float = 8.0) -> dict:
+def pair_consistency(dets, cam_idx, n_cam: int, max_dist: float = 8.0, id_tol: float = 0.25) -> dict:
     """GT-free cross-view consistency over all camera-agent pairs / frames.
 
     Args:
@@ -120,8 +123,8 @@ def pair_consistency(dets, cam_idx, n_cam: int, max_dist: float = 8.0) -> dict:
             prev = None                       # (d_ab, d_ba) from previous frame, iff reciprocal
             for t in range(min(len(dets[a]), len(dets[b]))):
                 n_pairframes += 1
-                ra = _find(dets[a][t], cam_idx[b], n_cam)   # b in a's view
-                rb = _find(dets[b][t], cam_idx[a], n_cam)   # a in b's view
+                ra = _find(dets[a][t], cam_idx[b], n_cam, id_tol)   # b in a's view
+                rb = _find(dets[b][t], cam_idx[a], n_cam, id_tol)   # a in b's view
                 n_sight += int(ra is not None) + int(rb is not None)
                 cur = None
                 if ra is not None and rb is not None:       # reciprocal sighting
@@ -189,7 +192,7 @@ def _ssim(a: np.ndarray, b: np.ndarray, win: int = 7) -> float:
     return float(np.mean(vals))
 
 
-def pixel_consistency(frames, dets, cam_idx, n_cam: int, min_overlap: int = 8) -> dict:
+def pixel_consistency(frames, dets, cam_idx, n_cam: int, min_overlap: int = 8, id_tol: float = 0.25) -> dict:
     """Dense warped-overlap similarity for every reciprocal sighting (GT-free).
 
     For each frame where a and b see each other, recover the pose ``d_hat`` from
@@ -209,8 +212,8 @@ def pixel_consistency(frames, dets, cam_idx, n_cam: int, min_overlap: int = 8) -
         for b in range(a + 1, P):
             n = min(len(dets[a]), len(dets[b]), len(frames[a]), len(frames[b]))
             for t in range(n):
-                ra = _find(dets[a][t], cam_idx[b], n_cam)
-                rb = _find(dets[b][t], cam_idx[a], n_cam)
+                ra = _find(dets[a][t], cam_idx[b], n_cam, id_tol)
+                rb = _find(dets[b][t], cam_idx[a], n_cam, id_tol)
                 if ra is None or rb is None:
                     continue
                 d_hat = 0.5 * ((ra - HALF) - (rb - HALF))           # b - a, symmetrized
