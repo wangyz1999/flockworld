@@ -98,8 +98,14 @@ class RoPE3D(nn.Module):
 
     def grid_freqs(self, f: int, h: int, w: int) -> torch.Tensor:
         """Complex freqs ``(f*h*w, head_dim//2)`` for one frame grid (frame-major)."""
-        ft, fh, fw = self.freqs_t[:f], self.freqs_h[:h], self.freqs_w[:w]
-        grid = torch.cat(
+        return self._grid(f, h, w, 0, 0).reshape(f * h * w, -1)
+
+    def _grid(self, f: int, h: int, w: int, h_off: int, w_off: int) -> torch.Tensor:
+        """One (f, h, w, head_dim//2) grid whose spatial coords start at (h_off, w_off)."""
+        ft = self.freqs_t[:f]
+        fh = self.freqs_h[h_off : h_off + h]
+        fw = self.freqs_w[w_off : w_off + w]
+        return torch.cat(
             [
                 ft[:, None, None, :].expand(f, h, w, ft.shape[-1]),
                 fh[None, :, None, :].expand(f, h, w, fh.shape[-1]),
@@ -107,7 +113,14 @@ class RoPE3D(nn.Module):
             ],
             dim=-1,
         )
-        return grid.reshape(f * h * w, -1)
+
+    def tiled_grid_freqs(self, f: int, h: int, w: int, offsets: list[tuple[int, int]]) -> torch.Tensor:
+        """Complex freqs ``(f*p*s, head_dim//2)`` for ``p`` agent views tiled into one
+        shared spatial grid (MIRA-style): view ``i``'s (h, w) block sits at coordinates
+        ``offsets[i] = (h_off, w_off)``. Temporal coords are shared by all views. The
+        flattened layout matches the token order ``(f p s)``."""
+        tiles = torch.stack([self._grid(f, h, w, ho, wo) for ho, wo in offsets], dim=1)
+        return tiles.reshape(f * len(offsets) * h * w, -1)  # (f, p, h, w, ·) -> (f p s, ·)
 
     @staticmethod
     def apply(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
@@ -146,7 +159,12 @@ class SelfAttention(nn.Module):
             t = RoPE3D.apply(t, freqs_cis)
             return rearrange(t, "(b p) (f s) n d -> b (f p s) n d", b=b, p=p, f=f, s=s)
 
-        q, k = rope(q), rope(k)
+        if p > 1 and freqs_cis.shape[0] == f * p * s:
+            # Tiled RoPE: freqs carry distinct per-agent spatial positions, already
+            # laid out in token order (f p s) -- apply on the full sequence directly.
+            q, k = RoPE3D.apply(q, freqs_cis), RoPE3D.apply(k, freqs_cis)
+        else:
+            q, k = rope(q), rope(k)
         q, k, v = (t.transpose(1, 2) for t in (q, k, v))  # (B, N, L, D)
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         out = rearrange(out.transpose(1, 2), "b l n d -> b l (n d)")
@@ -213,6 +231,22 @@ class FlockDiT(nn.Module):
         actions: (B, F, A)         per-frame action (A=2: acc_x, acc_y)
     Multi-agent (``num_agents > 1``): x is (B, P, F, C, H, W); t is (B, P, F);
     actions is (B, P, F, A). Returns predicted velocity, same shape as ``x``.
+
+    Tiled-view experiment flags, adapting the multiplayer conditioning scheme of
+    MIRA (https://mira-wm.com, Sec 4.5) to this architecture (all default to the
+    original behaviour):
+        tiled_rope:        each agent's tokens get distinct spatial RoPE coordinates in
+                           one shared grid (view tiles at ``tile_grid`` offsets) instead
+                           of every agent reusing the same (h, w) positions, so relative
+                           position also encodes which view a token belongs to.
+        tile_grid:         (rows, cols) arrangement of the ``num_agents`` view tiles,
+                           e.g. (2, 5) for 10 agents. Defaults to (num_agents, 1).
+        broadcast_actions: condition every token on ALL agents' actions -- per-agent
+                           embed + learned agent tag -> shared projection -> mean over
+                           agents -> one vector broadcast to all streams -- instead of
+                           each agent's tokens seeing only its own action.
+        use_agent_embed:   the additive per-agent token embedding; disable when tile
+                           position already encodes identity.
     """
 
     def __init__(
@@ -232,6 +266,10 @@ class FlockDiT(nn.Module):
         qk_norm: bool = True,
         eps: float = 1e-6,
         max_seq_len: int = 1024,
+        tiled_rope: bool = False,
+        tile_grid: tuple[int, int] | None = None,
+        broadcast_actions: bool = False,
+        use_agent_embed: bool = True,
     ):
         super().__init__()
         assert dim % heads == 0 and (dim // heads) % 2 == 0
@@ -244,6 +282,14 @@ class FlockDiT(nn.Module):
         self.freq_dim = freq_dim
         self.num_agents = num_agents
         self.local_attn_size = local_attn_size
+        self.tiled_rope = tiled_rope
+        self.tile_grid = tuple(tile_grid) if tile_grid is not None else (num_agents, 1)
+        if tiled_rope:
+            rows, cols = self.tile_grid
+            assert rows * cols == num_agents, (
+                f"tile_grid {self.tile_grid} does not cover num_agents={num_agents}"
+            )
+        self.broadcast_actions = broadcast_actions and num_agents > 1
 
         self.patch_embed = nn.Conv3d(in_channels, dim, kernel_size=self.patch_size, stride=self.patch_size)
         self.time_embedding = nn.Sequential(nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
@@ -252,8 +298,14 @@ class FlockDiT(nn.Module):
         self.blocks = nn.ModuleList([DiTBlock(dim, ffn_dim, heads, qk_norm, eps) for _ in range(depth)])
         self.head = OutputHead(dim, out_channels, self.patch_size, eps)
         self.rope = RoPE3D(self.head_dim, max_seq_len=max_seq_len)
-        if num_agents > 1:
+        self.agent_embed = None
+        if num_agents > 1 and use_agent_embed:
             self.agent_embed = nn.Embedding(num_agents, dim)
+        if self.broadcast_actions:
+            # MIRA's action combine: a learned per-agent tag added to the encoded action
+            # binds each action stream to its view tile (mean-pooling is order-invariant).
+            self.agent_action_embed = nn.Parameter(0.02 * torch.randn(num_agents, dim))
+            self.action_combine = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim))
 
     # -- attention mask: block-causal across frames, full within a frame --- #
     def _block_causal_mask(self, n_frames, block, device):
@@ -268,7 +320,15 @@ class FlockDiT(nn.Module):
     def _modulation(self, t, actions, b, p, f):
         """t: (B,P,F); actions: (B,P,F,A) -> e0 (B,F,P,6,dim), e_bd (B,F,P,dim)."""
         e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t.reshape(-1)))
-        e = e + self.action_embedding(actions).reshape(b * p * f, self.dim)
+        if self.broadcast_actions:
+            # Condition every agent's tokens on ALL agents' actions: per-agent embed,
+            # add the learned agent tag, project, mean over agents, share across P.
+            a = self.action_embedding(actions)  # (B,P,F,dim)
+            a = a + self.agent_action_embed[None, :, None, :]
+            a = self.action_combine(a).mean(dim=1, keepdim=True)  # (B,1,F,dim)
+            e = e + a.expand(b, p, f, self.dim).reshape(b * p * f, self.dim)
+        else:
+            e = e + self.action_embedding(actions).reshape(b * p * f, self.dim)
         e0 = self.time_projection(e).reshape(b, p, f, 6, self.dim)
         e0 = rearrange(e0, "b p f r c -> b f p r c")
         e_bd = rearrange(e.reshape(b, p, f, self.dim), "b p f c -> b f p c")
@@ -289,11 +349,16 @@ class FlockDiT(nn.Module):
         tok = rearrange(x, "b p f c h w -> (b p) c f h w")
         tok = self.patch_embed(tok)  # (B*P, dim, F', H', W')
         tok = rearrange(tok, "(b p) c f hh ww -> b f p (hh ww) c", b=b, p=p)
-        if self.num_agents > 1:
+        if self.agent_embed is not None:
             tok = tok + self.agent_embed(torch.arange(p, device=x.device))[None, None, :, None, :]
 
         e0, e_bd = self._modulation(t, actions, b, p, fp)
-        freqs = self.rope.grid_freqs(fp, hp, wp).to(tok.device)  # (F*S, hd//2)
+        if self.tiled_rope and p > 1:
+            rows, cols = self.tile_grid
+            offsets = [((i // cols) * hp, (i % cols) * wp) for i in range(p)]
+            freqs = self.rope.tiled_grid_freqs(fp, hp, wp, offsets).to(tok.device)  # (F*P*S, hd//2)
+        else:
+            freqs = self.rope.grid_freqs(fp, hp, wp).to(tok.device)  # (F*S, hd//2)
         mask = self._block_causal_mask(fp, p * s, x.device)
 
         for block in self.blocks:

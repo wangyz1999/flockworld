@@ -55,6 +55,11 @@ def build_model(cfg) -> FlockDiT:
         action_dim=len(list(cfg.data.action_features)),
         num_agents=int(cfg.data.get("num_agents", 1)),
         local_attn_size=int(m.get("local_attn_size", -1)),
+        # Tiled-view experiment flags (MIRA Sec 4.5); defaults preserve the baseline.
+        tiled_rope=bool(m.get("tiled_rope", False)),
+        tile_grid=tuple(m.tile_grid) if m.get("tile_grid", None) is not None else None,
+        broadcast_actions=bool(m.get("broadcast_actions", False)),
+        use_agent_embed=bool(m.get("use_agent_embed", True)),
     )
 
 

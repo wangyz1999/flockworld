@@ -123,7 +123,13 @@ class FlowTrainer:
         leading = tuple(frames.shape[:frame_axis])  # (B,) or (B,P)
         num_frames = frames.shape[frame_axis]
 
-        t = fm.sample_timesteps(leading, num_frames, ctx, frames.device)
+        if multi and bool(self.cfg.train.get("shared_timesteps", False)):
+            # Tiled-view mode (MIRA): the P views of a timestep are denoised as one
+            # frame, so they share a single timestep; expand keeps the (B,P,F) layout.
+            t = fm.sample_timesteps(leading[:1], num_frames, ctx, frames.device)
+            t = t[:, None, :].expand(*leading, num_frames)
+        else:
+            t = fm.sample_timesteps(leading, num_frames, ctx, frames.device)
         x_t, eps = fm.add_noise(frames, t)
         v_pred = self.model(x_t, t, actions)
         target = fm.velocity_target(eps, frames)
