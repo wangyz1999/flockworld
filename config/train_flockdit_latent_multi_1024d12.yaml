@@ -14,6 +14,7 @@ data:
   root: data/recording/20260623_135735   # override on CLI for the color set (20260702160453)
   latent: true
   latent_cache_dir: latent_cache
+  val_fraction: 0.1
   num_context_frames: 2
   num_future_frames: 4
   num_agents: 10
