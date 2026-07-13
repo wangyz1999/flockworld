@@ -4,6 +4,8 @@ Mirrors :class:`modeling.training.trainer.Trainer` (AdamW, AMP/GradScaler, grad
 clipping, tqdm, checkpoint dict) but replaces the L1 step with the rectified-flow
 step: sample per-frame timesteps (context frames clean), noise the future
 frames, predict velocity, and take MSE over future frames only.
+``train.diffusion_forcing`` switches to full diffusion forcing: every frame is
+noised with its own timestep (no clean context) and the MSE covers all frames.
 
 Optional Weights & Biases logging (``cfg.logger``): logs the full resolved config
 (training parameters), per-step and per-epoch train/val loss, and -- for
@@ -123,22 +125,32 @@ class FlowTrainer:
         leading = tuple(frames.shape[:frame_axis])  # (B,) or (B,P)
         num_frames = frames.shape[frame_axis]
 
+        # Full diffusion forcing (train.diffusion_forcing): noise ALL frames with
+        # independent timesteps (no clean-context pinning) and take the loss on every
+        # frame, so the model trains on the imperfect context it rolls out on. The
+        # default keeps the clean-context variant: context pinned to t=0, loss on
+        # future frames only.
+        df = bool(self.cfg.train.get("diffusion_forcing", False))
+        pin = 0 if df else ctx
         if multi and bool(self.cfg.train.get("shared_timesteps", False)):
             # Tiled-view mode (MIRA): the P views of a timestep are denoised as one
             # frame, so they share a single timestep; expand keeps the (B,P,F) layout.
-            t = fm.sample_timesteps(leading[:1], num_frames, ctx, frames.device)
+            t = fm.sample_timesteps(leading[:1], num_frames, pin, frames.device)
             t = t[:, None, :].expand(*leading, num_frames)
         else:
-            t = fm.sample_timesteps(leading, num_frames, ctx, frames.device)
+            t = fm.sample_timesteps(leading, num_frames, pin, frames.device)
         x_t, eps = fm.add_noise(frames, t)
         v_pred = self.model(x_t, t, actions)
         target = fm.velocity_target(eps, frames)
 
-        future = slice(ctx, None)
-        if multi:
-            err = (v_pred[:, :, future] - target[:, :, future]) ** 2
+        if df:
+            err = (v_pred - target) ** 2
         else:
-            err = (v_pred[:, future] - target[:, future]) ** 2
+            future = slice(ctx, None)
+            if multi:
+                err = (v_pred[:, :, future] - target[:, :, future]) ** 2
+            else:
+                err = (v_pred[:, future] - target[:, future]) ** 2
         return err.mean()
 
     def _run_epoch(self, epoch: int) -> float:
