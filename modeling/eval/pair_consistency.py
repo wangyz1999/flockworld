@@ -29,6 +29,8 @@ from scipy.optimize import linear_sum_assignment
 from modeling.eval import gt_project as gp
 
 HALF = gp.PARTIAL_SIZE // 2
+FOCAL_EXCLUDE_PX = 8.0  # the view owner's own dart sits at crop center every frame; its
+                        # hue-drift tail otherwise yields one-sided phantom sightings
 
 
 def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
@@ -59,11 +61,19 @@ def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
     expected ``target / n_cam``. (No hue-error is returned: it would only ever
     reflect darts already accepted as the right color, so it cannot measure
     identity stability -- a color flip shows up as a missed/mismatched sighting.)
+
+    Darts within ``FOCAL_EXCLUDE_PX`` of crop center are ignored: that is the
+    view owner's own dart, never a valid sighting of another agent (its hue-drift
+    tail was ~30% of ceiling sightings, all one-sided phantoms).
     """
     cents = np.asarray(view["centroids"], np.float32)
     if len(cents) == 0:
         return None
     hues = np.asarray(view["hue"], np.float32)
+    away = np.linalg.norm(cents - HALF, axis=1) > FOCAL_EXCLUDE_PX
+    cents, hues = cents[away], hues[away]
+    if len(cents) == 0:
+        return None
     cand = np.nonzero(_identify(hues, n_cam, tol) == target)[0]
     if len(cand) == 0:
         return None
