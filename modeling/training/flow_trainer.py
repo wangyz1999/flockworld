@@ -60,6 +60,8 @@ class FlowTrainer:
         self.output_dir = Path(cfg.output_dir)
         self.checkpoint_dir = self.output_dir / "checkpoints"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        for stale in self.checkpoint_dir.glob("*.tmp"):
+            stale.unlink()  # torn temp file from a previous run's wall-clock kill
         self.global_step = 0
         self.wandb = self._init_wandb()
         self.vis_sample = self._make_vis_sample()
@@ -343,7 +345,7 @@ class FlowTrainer:
 
     def save_checkpoint(self, epoch: int, train_loss: float, val_loss: float | None):
         path = self.checkpoint_dir / f"epoch_{epoch:04d}.pt"
-        torch.save(self._checkpoint_dict(epoch, train_loss, val_loss), path)
+        self._atomic_save(self._checkpoint_dict(epoch, train_loss, val_loss), path)
 
     def _save_step_checkpoint(self, epoch: int, recent_losses: list[float]):
         """Mid-epoch checkpoint every ``train.save_every_steps`` optimizer steps.
@@ -357,12 +359,22 @@ class FlowTrainer:
         """
         train_loss = sum(recent_losses) / max(1, len(recent_losses))
         path = self.checkpoint_dir / f"step_{self.global_step:08d}.pt"
-        torch.save(self._checkpoint_dict(epoch, train_loss, None), path)
+        self._atomic_save(self._checkpoint_dict(epoch, train_loss, None), path)
         keep = int(self.cfg.train.get("keep_step_checkpoints", 0))
         if keep > 0:
             # Zero-padded names sort lexicographically == numerically.
             for old in sorted(self.checkpoint_dir.glob("step_*.pt"))[:-keep]:
                 old.unlink()
+
+    @staticmethod
+    def _atomic_save(obj: dict, path: Path):
+        """torch.save via temp file + rename: a wall-clock kill (SIGTERM mid-write) can
+        truncate only the temp file, never a checkpoint a later stage may warm-start
+        from. ``.tmp`` names don't match the ``*.pt`` globs used by rotation, eval and
+        warm-start, so a torn temp file is inert."""
+        tmp = path.with_name(path.name + ".tmp")
+        torch.save(obj, tmp)
+        tmp.replace(path)
 
     def _checkpoint_dict(self, epoch: int, train_loss: float, val_loss: float | None) -> dict:
         return {
