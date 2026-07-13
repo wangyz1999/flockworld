@@ -146,7 +146,9 @@ class FlowTrainer:
             sample = self.val_loader.dataset[0]
         except Exception:
             return None
-        if sample["frames"].dim() != 4:  # single-agent only: (F, C, H, W)
+        # Streaming val samples carry raw "pixels", not "frames" -- no rollout video there.
+        frames = sample.get("frames", None)
+        if frames is None or frames.dim() != 4:  # single-agent only: (F, C, H, W)
             return None
         return sample
 
