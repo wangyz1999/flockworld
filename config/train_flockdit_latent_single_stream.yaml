@@ -1,0 +1,80 @@
+seed: 42
+device: auto
+output_dir: output/flock_dit_single_stream
+experiment_name: flock_dit_single_stream
+
+# Exp 4 STAGE 1: single-agent streaming pretrain (MIRA Sec 6.6 two-stage recipe).
+# Identical to train_flockdit_latent_multi_stream.yaml except data.num_agents=1: the
+# simulated world is unchanged (the sim config still colors 10 camera boids), but only
+# camera 0's view is rendered and trained on, so stage-2 pixels stay in-distribution
+# and only the cross-view part is new at fine-tune time. For a MIRA-faithful world with
+# a single colored boid instead, add the sim override collection.partial_agents=1.
+# Stage 2 (train_flockdit_latent_multi_stream_twostage.yaml) warm-starts from this
+# run's checkpoints; split one 48h budget across the stages via `timeout` at launch.
+
+data:
+  latent: true                    # world model trains in latent space (encoded on the fly)
+  num_context_frames: 2
+  num_future_frames: 4
+  num_agents: 1
+  action_features:
+    - acc_x
+    - acc_y
+  random_clip: true
+  streaming:
+    enabled: true
+    sim_config: config/data_recording.yaml
+    sim_overrides:
+      - rendering.color_mode=agent_id
+      - rendering.background_gradient=false
+    num_frames: 21                # -> L = 1 + (21-1)//4 = 6 latent frames = context + future
+    frame_stride: 1
+    windows_per_episode: 4        # windows cut from each simulated episode (amortizes warmup)
+    warmup_steps: 60
+    clips_per_epoch: 2000         # train windows per "epoch"
+    val_windows: 64               # fixed streamed validation set
+    threads: 2                    # JAX CPU threads per dataloader worker
+    stats_batches: 8              # batches used once at startup to measure latent mean/std
+
+vae:
+  checkpoint_path: pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt
+  encode_image_size: [128, 128]
+
+dataloader:
+  batch_size: 4
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  in_channels: 8
+  out_channels: 8
+  patch: 1
+  patch_t: 1
+  dim: 512
+  depth: 8
+  heads: 8
+  ffn_dim: 2048
+  local_attn_size: -1
+
+optim:
+  lr: 0.0002
+  weight_decay: 0.000001
+
+train:
+  epochs: 100
+  log_every: 20
+  save_every: 1
+  save_every_steps: 1000          # mid-epoch step_*.pt checkpoints (0 = off)
+  keep_step_checkpoints: 5        # rotate, keep newest N (0 = keep all)
+  grad_clip_norm: 1.0
+  amp: true
+
+logger:
+  use_wandb: true
+  wandb_project: flock-world-model
+  wandb_entity: null
+  log_sample_every: 0
+  sample_steps: 50
+  video_fps: 8

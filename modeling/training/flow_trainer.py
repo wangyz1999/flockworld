@@ -6,6 +6,8 @@ step: sample per-frame timesteps (context frames clean), noise the future
 frames, predict velocity, and take MSE over future frames only.
 ``train.diffusion_forcing`` switches to full diffusion forcing: every frame is
 noised with its own timestep (no clean context) and the MSE covers all frames.
+``train.warm_start`` initializes the model weights from another run's checkpoint
+(two-stage training: single-agent pretrain -> multi-agent fine-tune).
 
 Optional Weights & Biases logging (``cfg.logger``): logs the full resolved config
 (training parameters), per-step and per-epoch train/val loss, and -- for
@@ -27,6 +29,12 @@ from tqdm import tqdm
 
 from modeling import flow_matching as fm
 
+# Two-stage training (exp 4): parameters that may be MISSING from a warm-start
+# checkpoint and keep their fresh random init -- everything that only exists in the
+# multi-agent model, so a single-agent (num_agents=1) pretrain can seed a multi-agent
+# fine-tune. The shared backbone must match exactly; anything else missing is an error.
+_WARMSTART_EXEMPT = ("agent_embed.", "agent_action_embed", "action_combine.")
+
 
 class FlowTrainer:
     def __init__(self, cfg, model: nn.Module, train_loader, val_loader=None, decode_fn=None,
@@ -34,6 +42,9 @@ class FlowTrainer:
         self.cfg = cfg
         self.device = self._resolve_device(cfg.device)
         self.model = model.to(self.device)
+        warm_start = cfg.train.get("warm_start", None)
+        if warm_start:
+            self._load_warm_start(str(warm_start))
         self.train_loader = train_loader
         self.val_loader = val_loader
         # latent mode: maps a (F, C, h, w) latent clip -> (T_pix, 3, H, W) pixels for video logging
@@ -52,6 +63,62 @@ class FlowTrainer:
         self.global_step = 0
         self.wandb = self._init_wandb()
         self.vis_sample = self._make_vis_sample()
+
+    # -- two-stage warm start (exp 4) --------------------------------------- #
+    def _load_warm_start(self, path_str: str):
+        """Initialize model weights from a previous run's checkpoint (``train.warm_start``).
+
+        A warm START, not a resume: optimizer state, epoch and global_step all begin
+        fresh -- only the weights carry over. The path may be a checkpoint file or a
+        ``checkpoints/`` directory (resolved to the furthest-trained checkpoint), so an
+        unattended two-stage pipeline needn't predict where a wall-clock kill lands.
+        Keys in ``_WARMSTART_EXEMPT`` may be absent (single-agent -> multi-agent) and
+        keep their random init; any other mismatch is an error, not a silent skip.
+        """
+        path = Path(path_str)
+        if path.is_dir():
+            path = self._latest_checkpoint(path)
+        ckpt = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
+        state = ckpt["model"]
+        own = self.model.state_dict()
+
+        unexpected = [k for k in state if k not in own]
+        if unexpected:
+            raise ValueError(f"warm_start {path}: checkpoint has keys the model lacks: {unexpected}")
+        mismatched = [k for k in state if state[k].shape != own[k].shape]
+        if mismatched:
+            detail = {k: f"{tuple(state[k].shape)} vs model {tuple(own[k].shape)}" for k in mismatched}
+            raise ValueError(f"warm_start {path}: shape mismatch: {detail}")
+        missing = [k for k in own if k not in state]
+        not_exempt = [k for k in missing if not k.startswith(_WARMSTART_EXEMPT)]
+        if not_exempt:
+            raise ValueError(f"warm_start {path}: checkpoint is missing non-exempt keys: {not_exempt}")
+
+        self.model.load_state_dict(state, strict=False)
+        kept = f", kept at random init: {missing}" if missing else ""
+        print(f"[warm start] loaded {len(state)} tensors from {path} "
+              f"(epoch {ckpt.get('epoch')}, step {ckpt.get('global_step')}){kept}")
+
+    @staticmethod
+    def _latest_checkpoint(ckpt_dir: Path) -> Path:
+        """Furthest-trained checkpoint in a run's directory.
+
+        Zero-padded names sort lexicographically == numerically, so the newest of each
+        family is last; when both families exist, ``global_step`` (mmap = cheap scan)
+        decides between the newest step_*.pt and the newest epoch_*.pt.
+        """
+        candidates = [
+            files[-1]
+            for files in (sorted(ckpt_dir.glob("step_*.pt")), sorted(ckpt_dir.glob("epoch_*.pt")))
+            if files
+        ]
+        if not candidates:
+            raise FileNotFoundError(f"warm_start: no step_*.pt or epoch_*.pt in {ckpt_dir}")
+        return max(
+            candidates,
+            key=lambda p: int(torch.load(p, map_location="cpu", weights_only=False, mmap=True)
+                              .get("global_step", 0)),
+        )
 
     # -- wandb setup ------------------------------------------------------- #
     def _init_wandb(self):
