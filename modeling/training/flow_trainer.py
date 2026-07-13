@@ -15,6 +15,7 @@ prediction) for visual inspection. Uses a project distinct from the VAE runs.
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import numpy as np
@@ -98,8 +99,12 @@ class FlowTrainer:
 
     def fit(self):
         self._fit_stream_stats()
+        n_epochs = int(self.cfg.train.epochs)
+        # train.epochs=-1: no epoch limit -- run until killed. For wall-clock-budgeted
+        # runs (`timeout 48h ...`) the step checkpoints make the kill lossless.
+        epochs_iter = itertools.count(1) if n_epochs < 0 else range(1, n_epochs + 1)
         try:
-            for epoch in range(1, int(self.cfg.train.epochs) + 1):
+            for epoch in epochs_iter:
                 train_loss = self._run_epoch(epoch)
                 val_loss = self.evaluate() if self.val_loader is not None else None
                 if epoch % int(self.cfg.train.save_every) == 0:
