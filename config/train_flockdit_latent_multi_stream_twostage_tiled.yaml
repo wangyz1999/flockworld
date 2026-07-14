@@ -1,0 +1,92 @@
+seed: 42
+device: auto
+output_dir: output/flock_dit_multi_stream_twostage_tiled
+experiment_name: flock_dit_multi_stream_twostage_tiled
+
+# Experiment 8 STAGE 2 (two-stage + tiled): the tiled config
+# (train_flockdit_latent_multi_stream_tiled.yaml) warm-started from the same
+# single-agent stage 1 recipe as the plain two-stage slot
+# (train_flockdit_latent_single_stream.yaml). Hedge for the tiled slot being
+# undertrained from scratch: MIRA Sec 6.6 shows warm starts rescue
+# low-budget multiplayer. Warm start is weights-only (fresh optimizer/step);
+# the broadcast-action modules that stage 1 lacks keep their random init, and
+# tiled RoPE offsets need nothing from stage 1 (RoPE is relative -- within-view
+# geometry transfers under any tile layout). Split one 48h budget across the
+# stages with `timeout` at launch, same split as the plain two-stage slot.
+# NOTE at launch: stage 1 writes to output/flock_dit_single_stream -- if the
+# plain two-stage slot runs on the same machine, run this slot's stage 1
+# separately (each slot pays for its own stage 1 within its 48h budget).
+
+data:
+  latent: true                    # world model trains in latent space (encoded on the fly)
+  num_context_frames: 2
+  num_future_frames: 4
+  num_agents: 10
+  action_features:
+    - acc_x
+    - acc_y
+  random_clip: true
+  streaming:
+    enabled: true
+    sim_config: config/data_recording.yaml
+    sim_overrides:
+      - rendering.color_mode=agent_id
+      - rendering.background_gradient=false
+    num_frames: 21                # -> L = 1 + (21-1)//4 = 6 latent frames = context + future
+    frame_stride: 1
+    windows_per_episode: 4        # windows cut from each simulated episode (amortizes warmup)
+    warmup_steps: 60
+    clips_per_epoch: 2000         # train windows per "epoch"
+    val_windows: 64               # fixed streamed validation set
+    threads: 2                    # JAX CPU threads per dataloader worker
+    stats_batches: 8              # batches used once at startup to measure latent mean/std
+
+vae:
+  checkpoint_path: pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt
+  encode_image_size: [128, 128]
+
+dataloader:
+  batch_size: 4
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  in_channels: 8
+  out_channels: 8
+  patch: 1
+  patch_t: 1
+  dim: 512
+  depth: 8
+  heads: 8
+  ffn_dim: 2048
+  local_attn_size: -1
+  # -- tiled views (as in the tiled slot) ------------------------------------ #
+  tiled_rope: true
+  tile_grid: [2, 5]               # 10 views as 2 rows x 5 cols of 8x8 latent tiles
+  broadcast_actions: true
+  use_agent_embed: false
+
+optim:
+  lr: 0.0002
+  weight_decay: 0.000001
+
+train:
+  warm_start: output/flock_dit_single_stream/checkpoints
+  epochs: 100
+  log_every: 20
+  save_every: 1
+  save_every_steps: 1000          # mid-epoch step_*.pt checkpoints (0 = off)
+  keep_step_checkpoints: 5        # rotate, keep newest N (0 = keep all)
+  grad_clip_norm: 1.0
+  amp: true
+  shared_timesteps: true          # one timestep per tiled frame, shared by all views
+
+logger:
+  use_wandb: true
+  wandb_project: flock-world-model
+  wandb_entity: null
+  log_sample_every: 0
+  sample_steps: 50
+  video_fps: 8
