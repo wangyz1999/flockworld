@@ -29,7 +29,7 @@ data:
       - rendering.background_gradient=false
     num_frames: 21                # -> L = 1 + (21-1)//4 = 6 latent frames = context + future
     frame_stride: 1
-    windows_per_episode: 4        # windows cut from each simulated episode (amortizes warmup)
+    windows_per_episode: 16       # single-view episodes are loader-bound: more windows/episode amortizes warmup (measured 2026-07-14, +~20% samples/s over 4)
     warmup_steps: 60
     clips_per_epoch: 2000         # train windows per "epoch"
     val_windows: 64               # fixed streamed validation set
@@ -42,7 +42,7 @@ vae:
 
 dataloader:
   batch_size: 4
-  num_workers: 8
+  num_workers: 16                 # stage 1 is sim-loader-bound (multi stage is GPU-bound); scale with available cores
   pin_memory: true
   persistent_workers: true
   drop_last: true
