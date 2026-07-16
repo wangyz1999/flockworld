@@ -7,6 +7,25 @@
 - Allocation per task: 1 GPU, 26 CPUs, 90 GB RAM, 48 hours
 - Submission unit: seven-task Slurm array
 - Job definition: `jobs/flockdit_streaming_20260715/flockdit_streaming.job`
+- Server path configuration: `config/slurm_paths.conf`
+
+## Server Paths
+
+The server keeps the Git checkout and large training artifacts on separate filesystems.
+All paths are configured in `config/slurm_paths.conf` and sourced by both the submission
+script and each array task.
+
+| Resource | Path |
+|---|---|
+| Code checkout | `/home1/yunzhewa/projects/flockworld` |
+| Project storage | `/project2/ustun_1726/flowckworld` |
+| Experiment runs | `/project2/ustun_1726/flowckworld/output/flockdit_streaming_20260715` |
+| VAE checkpoint | `/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt` |
+
+Edit only `config/slurm_paths.conf` if either server location changes. Each Slurm task
+automatically creates its own unique run directory. That directory contains `logs/`,
+`wandb/`, and `checkpoints/`; two-stage runs additionally keep stage-1 artifacts under
+`stage1/`. No uv-cache path is overridden.
 
 ## Shared Training Settings
 
@@ -56,8 +75,8 @@ agent embeddings, and shared per-frame timesteps all change together.
 | Destination | Metrics and artifacts |
 |---|---|
 | W&B | Resolved configuration, parameter count, instantaneous step loss, rolling step loss, epoch train loss, and epoch validation loss |
-| Local output | `resolved_config.yaml`, optimizer/model checkpoints, checkpoint train/validation loss, and any enabled videos |
-| Slurm logs | Complete stdout and stderr under `logs/flockdit_streaming_20260715/` |
+| Local output | `resolved_config.yaml`, optimizer/model checkpoints under `checkpoints/`, checkpoint train/validation loss, and any enabled videos |
+| Run logs | Complete stdout, stderr, and Slurm environment under each run's `logs/` directory |
 
 Diffusion-forcing runs compute loss on all frames, while non-DF runs compute loss only
 on future frames. Their raw train and validation losses are therefore not directly

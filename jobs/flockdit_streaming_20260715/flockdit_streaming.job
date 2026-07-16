@@ -10,24 +10,25 @@
 #SBATCH --time=48:00:00
 #SBATCH --array=0-6
 #SBATCH --job-name=flockdit-stream
-#SBATCH --output=logs/flockdit_streaming_20260715/%x-%A_%a.out
-#SBATCH --error=logs/flockdit_streaming_20260715/%x-%A_%a.err
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
 #SBATCH --signal=TERM@600
 
 set -uo pipefail
 
-module restore
+PATH_CONFIG="${FLOCKWORLD_PATH_CONFIG:-${SLURM_SUBMIT_DIR}/config/slurm_paths.conf}"
+source "$PATH_CONFIG"
 
-PROJECT_SRC="${FLOCKWORLD_SRC:-${SLURM_SUBMIT_DIR}}"
+PROJECT_SRC="$FLOCKWORLD_CODE_DIR"
 cd "$PROJECT_SRC"
 
 export PYTHONUNBUFFERED=1
-export WANDB_DIR="${WANDB_DIR:-$PROJECT_SRC/wandb}"
 
 COMMON_OVERRIDES=(
   data.streaming.clips_per_epoch=20000
   train.epochs=-1
   train.save_every=2
+  "vae.checkpoint_path=$FLOCKWORLD_VAE_CHECKPOINT"
 )
 
 run_training() {
@@ -92,9 +93,22 @@ case "$SLURM_ARRAY_TASK_ID" in
 esac
 
 RUN_ID="${RUN_KEY}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
-RUN_DIR="output/flockdit_streaming_20260715/$RUN_ID"
+RUN_DIR="$FLOCKWORLD_STORAGE_DIR/output/flockdit_streaming_20260715/$RUN_ID"
+mkdir -p "$RUN_DIR/logs" "$RUN_DIR/wandb"
+export WANDB_DIR="$RUN_DIR/wandb"
+exec > >(tee -a "$RUN_DIR/logs/stdout.log") \
+  2> >(tee -a "$RUN_DIR/logs/stderr.log" >&2)
+
+env | grep '^SLURM_' | sort > "$RUN_DIR/logs/slurm_environment.txt"
 echo "Experiment $EXPERIMENT_ID: $RUN_KEY"
 echo "Output directory: $RUN_DIR"
+
+module restore
+
+if [[ ! -f "$FLOCKWORLD_VAE_CHECKPOINT" ]]; then
+  echo "VAE checkpoint not found: $FLOCKWORLD_VAE_CHECKPOINT" >&2
+  exit 1
+fi
 
 case "$EXPERIMENT_ID" in
   1|2|3|6)
@@ -105,7 +119,7 @@ case "$EXPERIMENT_ID" in
       "${COMMON_OVERRIDES[@]}"
     ;;
   4)
-    STAGE1_DIR="${RUN_DIR}_stage1"
+    STAGE1_DIR="$RUN_DIR/stage1"
     run_training 710m \
       uv run python train_flock_dit.py \
       --config config/train_flockdit_latent_single_stream.yaml \
@@ -121,7 +135,7 @@ case "$EXPERIMENT_ID" in
       "${COMMON_OVERRIDES[@]}"
     ;;
   7)
-    STAGE1_DIR="${RUN_DIR}_stage1"
+    STAGE1_DIR="$RUN_DIR/stage1"
     run_training 710m \
       uv run python train_flock_dit.py \
       --config config/train_flockdit_latent_single_stream.yaml \
@@ -138,7 +152,7 @@ case "$EXPERIMENT_ID" in
       "${COMMON_OVERRIDES[@]}"
     ;;
   8)
-    STAGE1_DIR="${RUN_DIR}_stage1"
+    STAGE1_DIR="$RUN_DIR/stage1"
     run_training 710m \
       uv run python train_flock_dit.py \
       --config config/train_flockdit_latent_single_stream.yaml \
