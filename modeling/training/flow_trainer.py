@@ -18,6 +18,7 @@ prediction) for visual inspection. Uses a project distinct from the VAE runs.
 from __future__ import annotations
 
 import itertools
+import signal
 from pathlib import Path
 
 import numpy as np
@@ -60,9 +61,14 @@ class FlowTrainer:
         self.output_dir = Path(cfg.output_dir)
         self.checkpoint_dir = self.output_dir / "checkpoints"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "resolved_config.yaml").write_text(
+            OmegaConf.to_yaml(self.cfg, resolve=True), encoding="utf-8"
+        )
         for stale in self.checkpoint_dir.glob("*.tmp"):
             stale.unlink()  # torn temp file from a previous run's wall-clock kill
         self.global_step = 0
+        self.stop_requested = False
+        self.stop_signal = None
         self.wandb = self._init_wandb()
         self.vis_sample = self._make_vis_sample()
 
@@ -169,15 +175,22 @@ class FlowTrainer:
               f"mean~{float(self.stream_encoder.mean.mean()):.3f} std~{float(self.stream_encoder.std.mean()):.3f}")
 
     def fit(self):
-        self._fit_stream_stats()
+        previous_handlers = self._install_signal_handlers()
         n_epochs = int(self.cfg.train.epochs)
         # train.epochs=-1: no epoch limit -- run until killed. For wall-clock-budgeted
         # runs (`timeout 48h ...`) the step checkpoints make the kill lossless.
         epochs_iter = itertools.count(1) if n_epochs < 0 else range(1, n_epochs + 1)
         try:
+            self._fit_stream_stats()
             for epoch in epochs_iter:
                 train_loss = self._run_epoch(epoch)
+                if self.stop_requested:
+                    self._save_graceful_checkpoint(epoch, train_loss)
+                    break
                 val_loss = self.evaluate() if self.val_loader is not None else None
+                if self.stop_requested:
+                    self._save_graceful_checkpoint(epoch, train_loss)
+                    break
                 if epoch % int(self.cfg.train.save_every) == 0:
                     self.save_checkpoint(epoch, train_loss, val_loss)
                 msg = f"epoch={epoch} train_loss={train_loss:.6f}"
@@ -188,6 +201,32 @@ class FlowTrainer:
         finally:
             if self.wandb is not None:
                 self.wandb.finish()
+            self._restore_signal_handlers(previous_handlers)
+
+    def _install_signal_handlers(self):
+        previous = {}
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, self._request_stop)
+        return previous
+
+    @staticmethod
+    def _restore_signal_handlers(previous):
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+    def _request_stop(self, signum, _frame):
+        if not self.stop_requested:
+            self.stop_requested = True
+            self.stop_signal = signal.Signals(signum).name
+            print(f"[graceful stop] received {self.stop_signal}; finishing the current step")
+
+    def _save_graceful_checkpoint(self, epoch: int, train_loss: float):
+        self._save_step_checkpoint(epoch, [train_loss])
+        print(
+            f"[graceful stop] saved step {self.global_step} after "
+            f"signal {self.stop_signal}"
+        )
 
     # -- core flow-matching step ------------------------------------------ #
     def _loss(self, batch) -> torch.Tensor:
@@ -234,6 +273,8 @@ class FlowTrainer:
         losses: list[float] = []
         iterator = tqdm(self.train_loader, desc=f"train {epoch}", leave=False)
         for step, batch in enumerate(iterator, start=1):
+            if self.stop_requested:
+                break
             batch = self._to_device(batch)
             self.optimizer.zero_grad(set_to_none=True)
             with autocast(device_type=self.device.type, enabled=self.scaler.is_enabled()):
@@ -259,6 +300,8 @@ class FlowTrainer:
                         {"train/loss_step": losses[-1], "train/loss_avg": avg, "epoch": epoch},
                         step=self.global_step,
                     )
+            if self.stop_requested:
+                break
         return sum(losses) / max(1, len(losses))
 
     @torch.no_grad()
@@ -266,6 +309,8 @@ class FlowTrainer:
         self.model.eval()
         losses: list[float] = []
         for batch in tqdm(self.val_loader, desc="val", leave=False):
+            if self.stop_requested:
+                break
             batch = self._to_device(batch)
             losses.append(float(self._loss(batch).cpu()))
         return sum(losses) / max(1, len(losses))
