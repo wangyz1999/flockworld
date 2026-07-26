@@ -1,0 +1,178 @@
+#!/bin/bash
+#SBATCH --account=ustun_1726
+#SBATCH --partition=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=26
+#SBATCH --constraint=a40|a100
+#SBATCH --gres=gpu:1
+#SBATCH --mem=90G
+#SBATCH --time=48:00:00
+#SBATCH --array=0-6
+#SBATCH --job-name=flockdit-stream
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
+#SBATCH --signal=TERM@600
+
+set -uo pipefail
+
+PATH_CONFIG="${FLOCKWORLD_PATH_CONFIG:-${SLURM_SUBMIT_DIR}/config/slurm_paths.conf}"
+source "$PATH_CONFIG"
+
+PROJECT_SRC="$FLOCKWORLD_CODE_DIR"
+cd "$PROJECT_SRC"
+
+export PYTHONUNBUFFERED=1
+
+COMMON_OVERRIDES=(
+  data.streaming.clips_per_epoch=20000
+  train.epochs=-1
+  train.save_every=2
+  "vae.checkpoint_path=$FLOCKWORLD_VAE_CHECKPOINT"
+)
+
+run_training() {
+  local duration="$1"
+  shift
+  echo "[$(date --iso-8601=seconds)] starting: $*"
+  timeout --signal=TERM --kill-after=5m --preserve-status "$duration" "$@"
+  local status=$?
+  echo "[$(date --iso-8601=seconds)] finished with status $status"
+  return "$status"
+}
+
+require_checkpoint() {
+  local checkpoint_dir="$1"
+  if ! compgen -G "$checkpoint_dir/step_*.pt" >/dev/null \
+    && ! compgen -G "$checkpoint_dir/epoch_*.pt" >/dev/null; then
+    echo "No checkpoint found in $checkpoint_dir" >&2
+    return 1
+  fi
+}
+
+case "$SLURM_ARRAY_TASK_ID" in
+  0)
+    EXPERIMENT_ID=1
+    RUN_KEY=exp01_baseline
+    CONFIG=config/train_flockdit_latent_multi_stream.yaml
+    ;;
+  1)
+    EXPERIMENT_ID=2
+    RUN_KEY=exp02_tiled
+    CONFIG=config/train_flockdit_latent_multi_stream_tiled.yaml
+    ;;
+  2)
+    EXPERIMENT_ID=3
+    RUN_KEY=exp03_diffusion_forcing
+    CONFIG=config/train_flockdit_latent_multi_stream_df.yaml
+    ;;
+  3)
+    EXPERIMENT_ID=4
+    RUN_KEY=exp04_two_stage
+    CONFIG=config/train_flockdit_latent_multi_stream_twostage.yaml
+    ;;
+  4)
+    EXPERIMENT_ID=6
+    RUN_KEY=exp06_tiled_df
+    CONFIG=config/train_flockdit_latent_multi_stream_tiled_df.yaml
+    ;;
+  5)
+    EXPERIMENT_ID=7
+    RUN_KEY=exp07_tiled_df_two_stage
+    CONFIG=config/train_flockdit_latent_multi_stream_triple.yaml
+    ;;
+  6)
+    EXPERIMENT_ID=8
+    RUN_KEY=exp08_tiled_two_stage
+    CONFIG=config/train_flockdit_latent_multi_stream_twostage_tiled.yaml
+    ;;
+  *)
+    echo "Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID" >&2
+    exit 2
+    ;;
+esac
+
+RUN_ID="${RUN_KEY}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RUN_DIR="$FLOCKWORLD_STORAGE_DIR/output/flockdit_streaming_20260715/$RUN_ID"
+mkdir -p "$RUN_DIR/logs" "$RUN_DIR/wandb"
+export WANDB_DIR="$RUN_DIR/wandb"
+exec > >(tee -a "$RUN_DIR/logs/stdout.log") \
+  2> >(tee -a "$RUN_DIR/logs/stderr.log" >&2)
+
+env | grep '^SLURM_' | sort > "$RUN_DIR/logs/slurm_environment.txt"
+echo "Experiment $EXPERIMENT_ID: $RUN_KEY"
+echo "Output directory: $RUN_DIR"
+
+module restore
+
+if [[ ! -f "$FLOCKWORLD_VAE_CHECKPOINT" ]]; then
+  echo "VAE checkpoint not found: $FLOCKWORLD_VAE_CHECKPOINT" >&2
+  exit 1
+fi
+
+case "$EXPERIMENT_ID" in
+  1|2|3|6)
+    run_training 2860m \
+      uv run python train_flock_dit.py --config "$CONFIG" \
+      "output_dir=$RUN_DIR" \
+      "experiment_name=$RUN_ID" \
+      "${COMMON_OVERRIDES[@]}"
+    ;;
+  4)
+    STAGE1_DIR="$RUN_DIR/stage1"
+    run_training 710m \
+      uv run python train_flock_dit.py \
+      --config config/train_flockdit_latent_single_stream.yaml \
+      "output_dir=$STAGE1_DIR" \
+      "experiment_name=${RUN_ID}_stage1" \
+      "${COMMON_OVERRIDES[@]}" || exit $?
+    require_checkpoint "$STAGE1_DIR/checkpoints" || exit $?
+    run_training 2150m \
+      uv run python train_flock_dit.py --config "$CONFIG" \
+      "output_dir=$RUN_DIR" \
+      "experiment_name=${RUN_ID}_stage2" \
+      "train.warm_start=$STAGE1_DIR/checkpoints" \
+      "${COMMON_OVERRIDES[@]}"
+    ;;
+  7)
+    STAGE1_DIR="$RUN_DIR/stage1"
+    run_training 710m \
+      uv run python train_flock_dit.py \
+      --config config/train_flockdit_latent_single_stream.yaml \
+      train.diffusion_forcing=true \
+      "output_dir=$STAGE1_DIR" \
+      "experiment_name=${RUN_ID}_stage1" \
+      "${COMMON_OVERRIDES[@]}" || exit $?
+    require_checkpoint "$STAGE1_DIR/checkpoints" || exit $?
+    run_training 2150m \
+      uv run python train_flock_dit.py --config "$CONFIG" \
+      "output_dir=$RUN_DIR" \
+      "experiment_name=${RUN_ID}_stage2" \
+      "train.warm_start=$STAGE1_DIR/checkpoints" \
+      "${COMMON_OVERRIDES[@]}"
+    ;;
+  8)
+    STAGE1_DIR="$RUN_DIR/stage1"
+    run_training 710m \
+      uv run python train_flock_dit.py \
+      --config config/train_flockdit_latent_single_stream.yaml \
+      "output_dir=$STAGE1_DIR" \
+      "experiment_name=${RUN_ID}_stage1" \
+      "${COMMON_OVERRIDES[@]}" || exit $?
+    require_checkpoint "$STAGE1_DIR/checkpoints" || exit $?
+    run_training 2150m \
+      uv run python train_flock_dit.py --config "$CONFIG" \
+      "output_dir=$RUN_DIR" \
+      "experiment_name=${RUN_ID}_stage2" \
+      "train.warm_start=$STAGE1_DIR/checkpoints" \
+      "${COMMON_OVERRIDES[@]}"
+    ;;
+esac
+
+status=$?
+if (( status != 0 )); then
+  echo "Experiment $EXPERIMENT_ID failed with status $status" >&2
+  exit "$status"
+fi
+
+echo "Experiment $EXPERIMENT_ID completed gracefully"
