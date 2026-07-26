@@ -56,6 +56,8 @@ def main():
         tile_grid=tuple(m.tile_grid) if m.get("tile_grid", None) is not None else None,
         broadcast_actions=bool(m.get("broadcast_actions", False)),
         use_agent_embed=bool(m.get("use_agent_embed", True)),
+        grad_checkpointing=bool(cfg.train.get("grad_checkpointing", False)),
+        agent_embed_per_layer=bool(m.get("agent_embed_per_layer", False)),
     )
     n_params = sum(p.numel() for p in model.parameters())
     print(OmegaConf.to_yaml(cfg))

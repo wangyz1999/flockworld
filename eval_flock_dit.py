@@ -60,6 +60,7 @@ def build_model(cfg) -> FlockDiT:
         tile_grid=tuple(m.tile_grid) if m.get("tile_grid", None) is not None else None,
         broadcast_actions=bool(m.get("broadcast_actions", False)),
         use_agent_embed=bool(m.get("use_agent_embed", True)),
+        agent_embed_per_layer=bool(m.get("agent_embed_per_layer", False)),
     )
 
 

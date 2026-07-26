@@ -13,7 +13,8 @@ adapted for boids:
 * single-agent and multi-agent share one code path: tokens always carry a
   player axis ``P`` (``P=1`` single-agent) and are interleaved per frame for
   attention (Solaris token-interleaving), with an additive agent embedding when
-  ``num_agents > 1``.
+  ``num_agents > 1`` (added once at the input by default; ``agent_embed_per_layer``
+  re-injects it before every block, Solaris-style).
 
 Faithful-to-Solaris pieces: 3D RoPE split (``rope_apply`` / ``apply_rope_mp``),
 adaLN-zero DiT block (6 modulation params), sinusoidal timestep embedding,
@@ -29,6 +30,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 
 # --------------------------------------------------------------------------- #
@@ -270,6 +272,8 @@ class FlockDiT(nn.Module):
         tile_grid: tuple[int, int] | None = None,
         broadcast_actions: bool = False,
         use_agent_embed: bool = True,
+        grad_checkpointing: bool = False,
+        agent_embed_per_layer: bool = False,
     ):
         super().__init__()
         assert dim % heads == 0 and (dim // heads) % 2 == 0
@@ -290,6 +294,8 @@ class FlockDiT(nn.Module):
                 f"tile_grid {self.tile_grid} does not cover num_agents={num_agents}"
             )
         self.broadcast_actions = broadcast_actions and num_agents > 1
+        self.grad_checkpointing = grad_checkpointing
+        self.agent_embed_per_layer = agent_embed_per_layer
 
         self.patch_embed = nn.Conv3d(in_channels, dim, kernel_size=self.patch_size, stride=self.patch_size)
         self.time_embedding = nn.Sequential(nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
@@ -349,8 +355,14 @@ class FlockDiT(nn.Module):
         tok = rearrange(x, "b p f c h w -> (b p) c f h w")
         tok = self.patch_embed(tok)  # (B*P, dim, F', H', W')
         tok = rearrange(tok, "(b p) c f hh ww -> b f p (hh ww) c", b=b, p=p)
-        if self.agent_embed is not None:
-            tok = tok + self.agent_embed(torch.arange(p, device=x.device))[None, None, :, None, :]
+        # Agent identity embedding. Default: added once here at the input (standard;
+        # the residual stream carries it). Opt-in agent_embed_per_layer re-injects it
+        # before every block (Solaris-style), in case a one-shot add washes out over
+        # depth -- kept as a flag so model size and embedding scheme stay separable.
+        agent_bias = (self.agent_embed(torch.arange(p, device=x.device))[None, None, :, None, :]
+                      if self.agent_embed is not None else None)
+        if agent_bias is not None and not self.agent_embed_per_layer:
+            tok = tok + agent_bias      # once at input (default)
 
         e0, e_bd = self._modulation(t, actions, b, p, fp)
         if self.tiled_rope and p > 1:
@@ -362,7 +374,13 @@ class FlockDiT(nn.Module):
         mask = self._block_causal_mask(fp, p * s, x.device)
 
         for block in self.blocks:
-            tok = block(tok, e0, freqs, mask)
+            if agent_bias is not None and self.agent_embed_per_layer:
+                tok = tok + agent_bias      # per-layer identity re-injection (opt-in)
+            if self.grad_checkpointing and self.training:
+                # recompute block activations in backward -> less memory, ~1.3x compute
+                tok = checkpoint(block, tok, e0, freqs, mask, use_reentrant=False)
+            else:
+                tok = block(tok, e0, freqs, mask)
         out = self.head(tok, e_bd)  # (B, F, P, S, patch_prod*out_c)
 
         out = rearrange(

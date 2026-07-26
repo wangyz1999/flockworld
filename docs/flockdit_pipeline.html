@@ -1,0 +1,276 @@
+<!--
+  FlockDiT end-to-end pipeline diagram.
+  Live artifact (redeploy edits to THIS url): https://claude.ai/code/artifact/241d2193-a7c3-43eb-922f-b349f9e5b993
+  To update: edit this file, then re-publish it to the url above.
+-->
+<title>FlockDiT Pipeline</title>
+<style>
+  :root{
+    --ground:#EEF1F4; --panel:#FFFFFF; --ink:#161A21; --slate:#586173;
+    --line:#D6DBE2; --teal:#0E7C86; --teal-tint:#E9F2F3;
+    --amber:#A24E0B; --amber-tint:#FBF0E4; --amber-line:#E7C9A4;
+    --scr:#0a0d12;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,monospace;
+    --sans:-apple-system,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  .page{
+    background:
+      linear-gradient(var(--ground) 0 0) padding-box,
+      radial-gradient(circle at 1px 1px, rgba(88,97,115,.10) 1px, transparent 0);
+    background-size:auto, 22px 22px;
+    color:var(--ink); font-family:var(--sans);
+    min-height:100vh; padding:52px 22px 72px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:720px; margin:0 auto}
+
+  .eyebrow{font-family:var(--mono); font-size:11.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--teal); font-weight:600}
+  h1{font-size:clamp(38px,7vw,54px); font-weight:800; letter-spacing:-.02em; margin:.22em 0 .16em; text-wrap:balance}
+  h1 .sub{color:var(--slate); font-weight:500}
+  .lede{font-size:15.5px; color:#2c333f; max-width:62ch; margin:0}
+  .lede b{color:var(--ink)}
+  .chips{display:flex; flex-wrap:wrap; gap:7px; margin-top:18px}
+  .chips span{font-family:var(--mono); font-size:11.5px; color:var(--slate); background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:4px 11px; font-variant-numeric:tabular-nums}
+
+  /* pipeline */
+  .pipe{display:flex; flex-direction:column; margin-top:26px}
+  .phase{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:17px 19px 19px; box-shadow:0 1px 3px rgba(20,26,33,.05)}
+  .phase.model{border-color:var(--amber-line)}
+  .ph-h{display:flex; align-items:baseline; gap:11px; flex-wrap:wrap; margin-bottom:14px}
+  .ph-n{font-family:var(--mono); font-size:12px; font-weight:700; color:#fff; background:var(--teal); border-radius:6px; padding:3px 9px; letter-spacing:.06em}
+  .model .ph-n{background:var(--amber)}
+  .ph-t{font-size:19px; font-weight:800; letter-spacing:-.015em}
+  .ph-s{font-size:12.5px; color:var(--slate); flex-basis:100%; margin-top:-6px}
+  .ph-s b{color:var(--ink)}
+
+  .pa{display:flex; flex-direction:column; align-items:center; margin:3px 0}
+  .pa .lbl{font-family:var(--mono); font-size:11px; color:var(--slate); background:var(--ground); padding:2px 9px; border-radius:5px; font-variant-numeric:tabular-nums}
+  .pa .line{width:2px; height:15px; background:var(--teal); opacity:.5}
+  .pa .head{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--teal); opacity:.7}
+
+  .mini{background:var(--ground); border:1px solid var(--line); border-radius:9px; padding:11px 13px}
+  .mini .t{font-size:13.5px; font-weight:700}
+  .mini .s{font-size:11.5px; color:var(--slate); margin-top:3px; line-height:1.45}
+  .mini .mono,.mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .produces{font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--slate); margin:11px 0 8px}
+
+  /* vae frame<->latent */
+  .vae{display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center; margin-top:6px}
+  .tile{text-align:center}
+  .tile .cap{font-family:var(--mono); font-size:11px; color:var(--slate); margin-top:6px}
+  .swatch{width:82px; height:82px; border-radius:7px; border:1px solid var(--line)}
+  .swatch.frame{background:var(--scr)}
+  .swatch.latent{background:
+    conic-gradient(from 0deg,#0E7C86,#39a0a8,#0E7C86 40%,#7db5b9,#0E7C86);
+    filter:saturate(.85); image-rendering:pixelated}
+  .bidir{font-family:var(--mono); font-size:12px; color:var(--teal); font-weight:700; text-align:center; line-height:1.3}
+  .bidir small{display:block; color:var(--slate); font-weight:400; font-size:10px}
+
+  /* action-conditioned demo */
+  .demo{background:var(--amber-tint); border:1px solid var(--amber-line); border-radius:10px; padding:14px 15px; margin-bottom:16px}
+  .demo-row{display:flex; align-items:center; gap:14px; justify-content:center; flex-wrap:wrap}
+  .demo figure{margin:0; text-align:center}
+  .pov{width:104px; height:104px; display:block; border-radius:6px}
+  .demo figcaption{font-family:var(--mono); font-size:10.5px; color:var(--slate); margin-top:6px}
+  .to{font-size:24px; color:var(--amber); font-weight:700}
+  .demo .cap{font-size:12.5px; color:#3a2a18; margin-top:12px; text-align:center}
+  .demo .cap b{color:var(--amber)}
+  .act-chip{font-family:var(--mono); font-size:11px; background:#fff; border:1px solid var(--amber-line); color:var(--amber); border-radius:6px; padding:3px 8px; display:inline-block}
+
+  /* dit stack (inside model phase) */
+  .stack{display:flex; flex-direction:column; margin-top:4px}
+  .sa{display:flex; flex-direction:column; align-items:center; margin:1px 0}
+  .sa .shape{font-family:var(--mono); font-size:11px; color:var(--slate); padding:4px 0 3px}
+  .sa .line{width:2px; height:13px; background:var(--teal); opacity:.5}
+  .sa .head{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid var(--teal); opacity:.7}
+  .stage{background:#fff; border:1px solid var(--line); border-left:3px solid var(--teal); border-radius:8px; padding:11px 13px}
+  .stage .st{font-size:13.5px; font-weight:700}
+  .stage .ss{font-size:11.5px; color:var(--slate); margin-top:3px; line-height:1.45}
+  .stage.core{border-left-color:var(--amber); background:var(--amber-tint); border-color:var(--amber-line)}
+  .stage.core .st::after{content:"multi-agent"; font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:#fff; background:var(--amber); border-radius:4px; padding:2px 6px; margin-left:9px; vertical-align:2px; font-weight:600}
+  .io3{display:grid; grid-template-columns:repeat(3,1fr); gap:9px}
+  .io{background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px 11px}
+  .io.cond{border-left:3px dashed var(--slate)}
+  .io .sym{font-family:var(--mono); font-weight:700; color:var(--teal)}
+  .io .nm{font-size:12.5px; font-weight:600; margin-left:3px}
+  .io .sh{display:block; font-family:var(--mono); font-size:11px; margin-top:5px}
+  .io .nt{display:block; font-size:10.5px; color:var(--slate); margin-top:3px; line-height:1.3}
+  .block .feeds{font-size:11.5px; color:var(--slate); margin:6px 0 10px; border-bottom:1px dashed var(--amber-line); padding-bottom:8px}
+  .block .feeds b{color:var(--ink)}
+  .sublayer{background:#fff; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font-size:12.5px; font-weight:600; margin-top:8px}
+  .sublayer .s{display:block; font-weight:400; font-size:11px; color:var(--slate); margin-top:3px; font-family:var(--mono); line-height:1.5}
+  .sublayer.hot{border:1.5px solid var(--amber)} .sublayer.hot b{color:var(--amber)}
+
+  /* rollout */
+  .roll{display:flex; flex-direction:column; gap:6px; margin-top:4px}
+  .strip{display:flex; gap:4px; align-items:center; flex-wrap:wrap}
+  .cell{width:26px; height:26px; border-radius:4px; border:1px solid var(--line); font-family:var(--mono); font-size:10px; display:flex; align-items:center; justify-content:center; color:var(--slate)}
+  .cell.ctx{background:var(--teal-tint); border-color:var(--teal); color:var(--teal)}
+  .cell.pred{background:var(--amber-tint); border-color:var(--amber); color:var(--amber)}
+  .cell.ghost{opacity:.4}
+  .roll .slidelbl{font-family:var(--mono); font-size:11px; color:var(--slate)}
+  .roll-key{display:flex; gap:16px; font-size:11.5px; color:var(--slate); font-family:var(--mono); margin-top:4px}
+  .roll-key i{display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:-1px; margin-right:5px}
+
+  /* eval (phase 05) */
+  .mini.core{border-left:3px solid var(--amber); background:var(--amber-tint); border-color:var(--amber-line)}
+  .gapbar{display:flex; align-items:center; gap:9px; margin:8px 0 2px}
+  .pt{text-align:center; font-family:var(--mono); border-radius:7px; border:1px solid; padding:6px 10px; white-space:nowrap}
+  .pt b{display:block; font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase}
+  .pt em{font-style:normal; font-size:15px; font-weight:700; font-variant-numeric:tabular-nums}
+  .pt.floor{border-color:var(--slate); color:var(--slate); background:#fff}
+  .pt.model{border-color:var(--amber); color:var(--amber); background:var(--amber-tint)}
+  .pt.ceil{border-color:var(--teal); color:var(--teal); background:var(--teal-tint)}
+  .gap{flex:1; min-width:40px; text-align:center; border-top:2px dashed var(--amber-line)}
+  .gap span{font-family:var(--mono); font-size:10px; color:var(--slate); background:var(--panel); padding:0 7px; position:relative; top:-8px; white-space:nowrap}
+
+  footer{margin-top:28px; display:flex; flex-direction:column; gap:13px}
+  .note{background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:14px 16px; font-size:13px; color:#2c333f}
+  .note.mech{border-left:3px solid var(--amber)}
+  .note b{color:var(--ink)} .note .mono{color:var(--teal); font-size:12px}
+  .src{font-family:var(--mono); font-size:11px; color:var(--slate); text-align:right}
+
+  @media(max-width:520px){ .io3{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} }
+  .pipe>*{animation:rise .5s cubic-bezier(.2,.7,.3,1) both}
+  .pipe>*:nth-child(3){animation-delay:.06s} .pipe>*:nth-child(5){animation-delay:.12s} .pipe>*:nth-child(7){animation-delay:.18s}
+  @keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){ .pipe>*{animation:none} }
+</style>
+
+<div class="page"><div class="wrap">
+  <header>
+    <div class="eyebrow">Action-conditioned video world model · end-to-end</div>
+    <h1>FlockDiT <span class="sub">pipeline</span></h1>
+    <p class="lede">From a boid simulator to long multi-agent video: simulate flocking, compress frames with a VAE, train a flow-matching transformer to <b>predict future frames from context + steering actions</b>, then generate long videos by autoregressive rollout. Ten camera-agents are modeled jointly so cross-agent attention can keep their overlapping views consistent.</p>
+    <div class="chips"><span>10k episodes</span><span>P = 10 agents</span><span>128px POV</span><span>WanVAE 16×↓</span><span>dim 512 · depth 8</span><span>z-dim 8</span></div>
+  </header>
+
+  <div class="pipe">
+
+    <!-- ===== 01 DATA ===== -->
+    <div class="phase">
+      <div class="ph-h"><span class="ph-n">01</span><span class="ph-t">Data generation</span><span class="ph-s">FlockWorld boid simulator (JAX) — <b>100 boids</b>, the first <b>10</b> are camera-agents.</span></div>
+      <div class="mini"><div class="t">Simulate an episode</div><div class="s">Boids flock under alignment / cohesion / separation; every boid's steering acceleration is its action. Reflecting walls form a white world border.</div></div>
+      <div class="produces">records ↓</div>
+      <div class="grid2">
+        <div class="mini"><div class="t">10 × POV videos</div><div class="s">egocentric <span class="mono">128×128</span> crop centered on each camera-agent</div></div>
+        <div class="mini"><div class="t">State / action parquet</div><div class="s">position, velocity, heading, <b>action</b> for all <span class="mono">100</span> boids, every frame</div></div>
+      </div>
+    </div>
+
+    <div class="pa"><span class="lbl">POV frames</span><span class="line"></span><span class="head"></span></div>
+
+    <!-- ===== 02 VAE ===== -->
+    <div class="phase">
+      <div class="ph-h"><span class="ph-n">02</span><span class="ph-t">VAE training + encode</span><span class="ph-s">Train <b>WanVAE</b> on the POV frames, then encode the whole dataset to a latent cache.</span></div>
+      <div class="vae">
+        <div class="tile"><div class="swatch frame"></div><div class="cap">128×128×3</div></div>
+        <div class="bidir">⇄<small>encode / decode</small></div>
+        <div class="tile"><div class="swatch latent"></div><div class="cap">8×8×8 latent</div></div>
+      </div>
+      <div class="mini" style="margin-top:12px"><div class="s"><b>16× spatial · 4× temporal</b> compression → the transformer works in this small latent space, not pixels. Retrained per experiment setup (coloring agents / adding a gradient background changes the pixels, so the VAE and cache are rebuilt).</div></div>
+    </div>
+
+    <div class="pa"><span class="lbl">8×8×8 latents + actions</span><span class="line"></span><span class="head"></span></div>
+
+    <!-- ===== 03 MODEL ===== -->
+    <div class="phase model">
+      <div class="ph-h"><span class="ph-n">03</span><span class="ph-t">FlockDiT training</span><span class="ph-s"><b>Action-conditioned video generation:</b> a flow-matching DiT predicts each agent's future frames from clean context frames + its per-frame steering action.</span></div>
+
+      <div class="demo">
+        <div class="demo-row">
+          <figure>
+            <svg class="pov" viewBox="0 0 104 104" role="img" aria-label="agent point-of-view frame with steering action">
+              <rect x="1.5" y="1.5" width="101" height="101" rx="3" fill="#0a0d12" stroke="#fff" stroke-width="2.5"/>
+              <polygon points="26,34 33,37.5 26,41" fill="#fff"/>
+              <polygon points="74,28 81,31.5 74,35" fill="#fff"/>
+              <polygon points="80,70 87,73.5 80,77" fill="#fff"/>
+              <polygon points="34,78 41,81.5 34,85" fill="#fff"/>
+              <polygon points="46,48 58,52 46,56" fill="#2ec4c4"/>
+              <line x1="52" y1="52" x2="78" y2="34" stroke="#E8912E" stroke-width="3" stroke-linecap="round"/>
+              <polygon points="78,34 69,35 73.5,42.5" fill="#E8912E"/>
+            </svg>
+            <figcaption>view + action aₜ</figcaption>
+          </figure>
+          <span class="to">→</span>
+          <figure>
+            <svg class="pov" viewBox="0 0 104 104" role="img" aria-label="predicted next point-of-view frame">
+              <rect x="1.5" y="1.5" width="101" height="101" rx="3" fill="#0a0d12" stroke="#fff" stroke-width="2.5"/>
+              <polygon points="18,44 25,47.5 18,51" fill="#fff"/>
+              <polygon points="64,38 71,41.5 64,45" fill="#fff"/>
+              <polygon points="72,80 79,83.5 72,87" fill="#fff"/>
+              <polygon points="26,88 33,91.5 26,95" fill="#fff"/>
+              <polygon points="46,48 58,52 46,56" fill="#2ec4c4"/>
+            </svg>
+            <figcaption>predicted next view</figcaption>
+          </figure>
+        </div>
+        <div class="cap">The focal agent (<span style="color:#0E7C86;font-weight:700">teal</span>) stays centered; the <b>action</b> <span class="act-chip">aₜ = (accₓ, a_y)</span> conditions where the world scrolls next. Injected via adaLN — one action stream per agent.</div>
+      </div>
+
+      <div class="stack">
+        <div class="io3">
+          <div class="io"><span class="sym">x</span><span class="nm">latents</span><span class="sh">(B,10,F,8,8,8)</span><span class="nt">context clean · future noised</span></div>
+          <div class="io cond"><span class="sym">t</span><span class="nm">timesteps</span><span class="sh">(B,10,F)</span><span class="nt">per-frame σ = t/1000</span></div>
+          <div class="io cond"><span class="sym">a</span><span class="nm">actions</span><span class="sh">(B,10,F,2)</span><span class="nt">steering accel</span></div>
+        </div>
+        <div class="sa"><span class="shape">x → tokens</span><span class="line"></span><span class="head"></span></div>
+        <div class="stage"><div class="st">Patch embed</div><div class="ss">Conv3d 8→512 · each 8×8 latent → <span class="mono">64</span> tokens</div></div>
+        <div class="sa"><span class="shape">(B, F, P, 64, 512)</span><span class="line"></span><span class="head"></span></div>
+        <div class="stage core"><div class="st">+ Agent embedding</div><div class="ss"><span class="mono">Embedding(10,512)</span> — a learned identity per view</div></div>
+        <div class="sa"><span class="shape">(B, F, P, 64, 512)</span><span class="line"></span><span class="head"></span></div>
+        <div class="stage core"><div class="st">Token interleaving</div><div class="ss">one sequence, frame-major → all 10 agents' 64 tokens sit together, <span class="mono">640</span> tokens/frame</div></div>
+        <div class="sa"><span class="shape">(B, F·P·S, 512)</span><span class="line"></span><span class="head"></span></div>
+        <div class="stage block core">
+          <div class="st">DiT block ×8</div>
+          <div class="feeds">conditioned by <b>adaLN</b>(timestep + action) · positioned by <b>3D RoPE</b> (T,H,W)</div>
+          <div class="sublayer hot">Self-attention — <b>block-causal, cross-agent</b><span class="s">qk-RMSNorm · mask block = P·S = 640 · frame t sees every agent in t & earlier</span></div>
+          <div class="sublayer">Feed-forward<span class="s">512 → 2048 → 512, GELU</span></div>
+        </div>
+        <div class="sa"><span class="shape">(B, F, P, 64, 512)</span><span class="line"></span><span class="head"></span></div>
+        <div class="stage"><div class="st">Output head</div><div class="ss">adaLN → Linear 512→8 → unpatchify → velocity <span class="mono">v = ε − x₀</span> (loss on future frames only)</div></div>
+      </div>
+    </div>
+
+    <div class="pa"><span class="lbl">trained model</span><span class="line"></span><span class="head"></span></div>
+
+    <!-- ===== 04 ROLLOUT ===== -->
+    <div class="phase">
+      <div class="ph-h"><span class="ph-n">04</span><span class="ph-t">Autoregressive rollout</span><span class="ph-s">Generate long video: predict a short window, slide it forward using the model's own output as the next context.</span></div>
+      <div class="roll">
+        <div class="strip">
+          <span class="cell ctx">c</span><span class="cell ctx">c</span><span class="cell pred">p</span><span class="cell pred">p</span><span class="cell pred">p</span><span class="cell pred">p</span>
+          <span class="slidelbl">→ slide window →</span>
+          <span class="cell ghost ctx">c</span><span class="cell ghost ctx">c</span><span class="cell ghost pred">p</span><span class="cell ghost pred">p</span><span class="slidelbl">→ … → 10 s</span>
+        </div>
+        <div class="roll-key"><span><i style="background:var(--teal-tint);border:1.5px solid var(--teal)"></i>context (clean)</span><span><i style="background:var(--amber-tint);border:1.5px solid var(--amber)"></i>predicted</span></div>
+      </div>
+      <div class="mini" style="margin-top:12px"><div class="s">All 10 agents advance together each step (cross-agent attention stays on). The last frames become the next context — that feedback is the source of long-horizon drift. Finally, <b>VAE-decode</b> the latents back to a <span class="mono">128px</span> multi-agent video.</div></div>
+    </div>
+
+    <div class="pa"><span class="lbl">generated multi-agent video</span><span class="line"></span><span class="head"></span></div>
+
+    <!-- ===== 05 EVALUATION ===== -->
+    <div class="phase">
+      <div class="ph-h"><span class="ph-n">05</span><span class="ph-t">Evaluation</span><span class="ph-s">Does modeling the 10 agents <b>jointly</b> make their overlapping views mutually consistent?</span></div>
+      <div class="grid2">
+        <div class="mini"><div class="t">Tier A · per-view fidelity</div><div class="s">is each view individually right vs ground truth? <span class="mono">detection rate · position error</span></div></div>
+        <div class="mini core"><div class="t">Tier B · cross-view consistency</div><div class="s">the core metric — when two views overlap, do they put the same boid at the same world spot? <span class="mono">correspondence · positional consistency</span></div></div>
+      </div>
+      <div class="produces">Tier B correspondence — reported floor ≤ model ≤ ceiling ↓</div>
+      <div class="gapbar">
+        <div class="pt floor"><b>baseline</b><em>0.07</em></div>
+        <div class="pt model"><b>model</b><em>0.08</em></div>
+        <div class="gap"><span>← the gap we want to close →</span></div>
+        <div class="pt ceil"><b>ceiling</b><em>0.94</em></div>
+      </div>
+      <div class="note mech" style="margin-top:14px"><b>What we want:</b> when two agents can see the same boid, their views should place it in the same spot. The <b>ceiling</b> is the best that's achievable (measured on the real video); the <b>floor</b> is what 10 separate models that never share information would score. We want the model up near the ceiling — that would mean the agents are genuinely using each other's views.</div>
+    </div>
+
+  </div>
+
+  <footer>
+    <div class="src">source: flockworld/env · WanVAE · modeling/models/flock_dit.py · flow_matching.py</div>
+  </footer>
+</div></div>

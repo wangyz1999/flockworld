@@ -7,8 +7,9 @@ Two modes (``--mode``):
   into one grid video. Sources: ``--source gt`` (decode REAL latents -> geometry
   sanity) or ``--source pred`` (roll out the model -> prediction overlay).
 
-* **metrics** (quantitative): compute Tier A (per-view fidelity vs GT) and Tier B
-  (cross-view consistency) for the sources and print a bracketed table:
+* **metrics** (quantitative): compute Tier A (per-view fidelity vs GT) and the
+  GT-free cross-view consistency (``pair_consistency``) for the sources and print
+  a bracketed table:
     - **ceiling**  = GT latents decoded (best achievable; VAE + detection noise).
     - **model**    = the multi-agent rollout (P agents together, cross-attention on).
     - **baseline** (``--baseline``): the consistency FLOOR.
@@ -36,7 +37,7 @@ import torch
 from modeling.configs import load_cfg
 from modeling.data.flocking_latent_dataset import FlockingLatentMultiDataset
 from modeling import flow_matching as fm
-from modeling.eval import gt_project as gp, overlay as ov, consistency as cs
+from modeling.eval import gt_project as gp, overlay as ov, consistency as cs, pair_consistency as pc
 from modeling.eval.boid_detect import detect_boids
 from eval_flock_dit import find_best_checkpoint, build_model, write_mp4
 from train_flock_dit import build_decode_fn
@@ -49,6 +50,23 @@ def _gt_positions(cfg, episode_id):
         Path(cfg.data.root) / "state_action" / f"{episode_id}.parquet", NUM_SIM_BOIDS)
 
 
+def _num_camera_agents(cfg, default: int) -> int:
+    """Hue period for identity colors = the camera-agent count at generation time.
+
+    Read from the dataset's saved ``settings.yaml`` (colored agent k -> hue
+    k/n_cam), falling back to ``default`` (the rolled-out agent count).
+    """
+    from omegaconf import OmegaConf
+    p = Path(cfg.data.root) / "settings.yaml"
+    if p.exists():
+        s = OmegaConf.load(p)
+        for key in ("collection.partial_agents", "partial_agents", "num_camera_agents"):
+            v = OmegaConf.select(s, key)
+            if v is not None:
+                return int(v)
+    return int(default)
+
+
 def _load_model(cfg, output_dir, device):
     ckpt, val = find_best_checkpoint(Path(output_dir) / "checkpoints")
     print(f"checkpoint: {ckpt} (val_loss={val:.5f})")
@@ -57,13 +75,18 @@ def _load_model(cfg, output_dir, device):
     return m.eval()
 
 
-def _detect_episode(lat, decode_fn):
-    """lat (P, T, z, h, w) -> dets[agent][frame] = (N,2) detected centroids."""
-    dets = []
+def _decode_detect(lat, decode_fn):
+    """lat (P, T, z, h, w) -> (frames[agent] (Tp,H,W,3) uint8, dets[agent][frame] dict).
+
+    Decode each agent's latents ONCE; keep the pixel frames (for pixel_consistency)
+    and run the dart detector on them (centroids+hue for tier_a / pair_consistency).
+    """
+    frames_all, dets_all = [], []
     for j in range(lat.shape[0]):
         frames = ov.to_uint8(decode_fn(lat[j]).detach().cpu())
-        dets.append([detect_boids(frames[t])["centroids"] for t in range(len(frames))])
-    return dets
+        frames_all.append(frames)
+        dets_all.append([detect_boids(frames[t]) for t in range(len(frames))])
+    return frames_all, dets_all
 
 
 def _rollout_model(model, frames, actions, ctx, T, wf, steps):
@@ -91,8 +114,11 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
     steps = int(args.steps)
     n_ep = min(int(args.episodes), len(ds.episodes))
     cols = ["ceiling", "model"] + ([] if args.baseline == "none" else ["baseline"])
-    A = {s: [] for s in cols}; B = {s: [] for s in cols}
-    print(f"metrics: {args.seconds}s = {n_lat} latent frames, {n_ep} episodes (baseline={args.baseline})")
+    A = {s: [] for s in cols}; B = {s: [] for s in cols}; C = {s: [] for s in cols}
+    ev = {s: [] for s in cols}                             # (overlap_frac, psnr, ssim) per pixel event
+    n_cam = _num_camera_agents(cfg, cfg.data.num_agents)   # hue period for identity colors
+    print(f"metrics: {args.seconds}s = {n_lat} latent frames, {n_ep} episodes "
+          f"(baseline={args.baseline}, n_cam={n_cam})")
     for e in range(n_ep):
         ep = ds.full_episode(e); ctx = int(ep["context_len"]); T = min(n_lat, ep["frames"].shape[1])
         cam_idx = [ai - 1 for ai in ep["agent_indices"]]
@@ -106,9 +132,12 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
         if args.baseline == "single":
             lat["baseline"] = _rollout_single(baseline_model, frames, actions, ctx, T, wf, steps)
         for s in cols:
-            dets = _detect_episode(lat[s], decode_fn)
-            A[s].append(cs.tier_a(dets, pos, cam_idx))
-            B[s].append(cs.tier_b(dets, pos, cam_idx))
+            frames, dets = _decode_detect(lat[s], decode_fn)
+            cents = [[d["centroids"] for d in ag] for ag in dets]   # tier_a needs centroids only
+            A[s].append(cs.tier_a(cents, pos, cam_idx))
+            B[s].append(pc.pair_consistency(dets, cam_idx, n_cam))   # GT-free (no pos)
+            pm = pc.pixel_consistency(frames, dets, cam_idx, n_cam)  # GT-free dense (warped overlap)
+            ev[s].extend(pm.pop("events")); C[s].append(pm)
         print(f"  ep{ep['episode_id']} ({e + 1}/{n_ep})", flush=True)
 
     def mean(acc, key):
@@ -123,11 +152,38 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
 
     table("Tier A — per-view fidelity vs GT", A,
           ["detection_rate", "position_error", "mean_detected_per_frame", "mean_gt_visible_per_frame"])
-    table("Tier B — cross-view consistency (ceiling=best | baseline=floor)", B,
-          ["correspondence", "positional_consistency", "temporal_std",
-           "exclusion_rate", "covisibility_rate", "mean_covisible_per_frame"])
-    print("\ncorrespondence/detection: higher=better | positional/temporal/exclusion/position_error: lower=better")
-    print("model should beat the baseline on Tier B (interleaving buying cross-view agreement) and approach ceiling.")
+    table("Cross-view consistency — GT-FREE (ceiling=best | baseline=floor)", B,
+          ["reciprocity_rate", "displacement_error", "motion_error",
+           "white_correspondence", "white_count_error", "sightings_per_frame"])
+    table("Pixel similarity — warped overlap, GT-FREE (higher=better)", C,
+          ["psnr", "ssim", "mean_overlap_frac"])
+
+    def total(acc, key):
+        return int(sum(d[key] for d in acc))
+
+    # A self-triggered metric: the rates above are only meaningful against the VOLUME the model
+    # actually rendered (a near-empty world trivially "agrees"). These counts are the sample sizes.
+    print("\nvolume (self-generated, differs per column — READ THE RATES AGAINST THIS):")
+    print(f"{'':>26}" + "".join(f"{c:>10}" for c in cols))
+    for acc, key, lab in [(B, "n_sightings", "sightings"), (B, "n_reciprocal", "reciprocal"),
+                          (B, "n_matched_white", "white_match"), (B, "n_overlap_white", "white_chances"),
+                          (C, "n_pixel_events", "pixel_events")]:
+        print(f"{lab:>26}" + "".join(f"{total(acc[c], key):>10}" for c in cols))
+
+    # PSNR stratified by overlap fraction (the "harder when bigger" check): does dense
+    # agreement decay as the shared region grows? All GT-free.
+    print("\nPSNR by overlap fraction:")
+    print(f"{'overlap frac':>26}" + "".join(f"{c:>10}" for c in cols))
+    for lo, hi in [(0.0, 0.5), (0.5, 0.75), (0.75, 1.01)]:
+        cells = []
+        for c in cols:
+            v = [p for (f, p, _s) in ev[c] if lo <= f < hi]
+            cells.append(f"{np.mean(v):>10.2f}" if v else f"{'-':>10}")
+        print(f"{f'[{lo:.2f},{hi:.2f})':>26}" + "".join(cells))
+
+    print("\nreciprocity/white_correspondence/psnr/ssim: higher=better | displacement/motion/count: lower=better")
+    print("NB: a sparse world scores high on rates at near-zero volume — compare columns at similar volume.")
+    print("model should beat the single-agent baseline on agreement AND approach the ceiling (detector/hue floor).")
 
 
 @torch.no_grad()
