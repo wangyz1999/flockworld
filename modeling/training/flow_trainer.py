@@ -268,13 +268,23 @@ class FlowTrainer:
                 err = (v_pred[:, future] - target[:, future]) ** 2
         return err.mean()
 
+    def _optimizer_step(self):
+        if float(self.cfg.train.grad_clip_norm) > 0:
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.cfg.train.grad_clip_norm))
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        self.optimizer.zero_grad(set_to_none=True)
+
     def _run_epoch(self, epoch: int) -> float:
         self.model.train()
         losses: list[float] = []
         accum = max(1, int(self.cfg.train.get("grad_accum_steps", 1)))  # effective batch = batch_size * accum
-        n_batches = len(self.train_loader)
+        # Streaming train loaders wrap an IterableDataset (no len()), so the epoch tail
+        # is flushed after the loop instead of comparing ``step`` to a batch count.
         iterator = tqdm(self.train_loader, desc=f"train {epoch}", leave=False)
         self.optimizer.zero_grad(set_to_none=True)
+        pending = False
         for step, batch in enumerate(iterator, start=1):
             if self.stop_requested:
                 break
@@ -282,14 +292,11 @@ class FlowTrainer:
             with autocast(device_type=self.device.type, enabled=self.scaler.is_enabled()):
                 loss = self._loss(batch)
             self.scaler.scale(loss / accum).backward()   # 1/accum -> accumulated grad is the window mean
+            pending = True
 
-            if step % accum == 0 or step == n_batches:    # step once per accum micro-batches (+ epoch tail)
-                if float(self.cfg.train.grad_clip_norm) > 0:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.cfg.train.grad_clip_norm))
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-                self.optimizer.zero_grad(set_to_none=True)
+            if step % accum == 0:
+                self._optimizer_step()
+                pending = False
             self.global_step += 1
 
             losses.append(float(loss.detach().cpu()))
@@ -307,6 +314,8 @@ class FlowTrainer:
                     )
             if self.stop_requested:
                 break
+        if pending:
+            self._optimizer_step()
         return sum(losses) / max(1, len(losses))
 
     @torch.no_grad()
@@ -423,9 +432,22 @@ class FlowTrainer:
         """torch.save via temp file + rename: a wall-clock kill (SIGTERM mid-write) can
         truncate only the temp file, never a checkpoint a later stage may warm-start
         from. ``.tmp`` names don't match the ``*.pt`` globs used by rotation, eval and
-        warm-start, so a torn temp file is inert."""
+        warm-start, so a torn temp file is inert.
+
+        The graceful time-limit handler calls this from inside its own SIGTERM/SIGINT
+        response, at which point a DataLoader worker (killed by that same signal --
+        ``timeout`` signals the whole process group) can trip PyTorch's SIGCHLD-based
+        worker-failure watchdog mid-write, raising inside ``torch.save`` and crashing
+        the graceful save it was supposed to protect. SIGCHLD is ignored for the
+        duration of the save and restored right after, since we're already shutting
+        down and don't need the watchdog here.
+        """
         tmp = path.with_name(path.name + ".tmp")
-        torch.save(obj, tmp)
+        previous = signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+        try:
+            torch.save(obj, tmp)
+        finally:
+            signal.signal(signal.SIGCHLD, previous)
         tmp.replace(path)
 
     def _checkpoint_dict(self, epoch: int, train_loss: float, val_loss: float | None) -> dict:

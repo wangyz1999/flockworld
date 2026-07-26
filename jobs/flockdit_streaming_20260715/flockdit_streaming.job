@@ -125,7 +125,11 @@ case "$EXPERIMENT_ID" in
       --config config/train_flockdit_latent_single_stream.yaml \
       "output_dir=$STAGE1_DIR" \
       "experiment_name=${RUN_ID}_stage1" \
-      "${COMMON_OVERRIDES[@]}" || exit $?
+      "${COMMON_OVERRIDES[@]}"
+    # Gate stage 2 on an actual checkpoint, not stage 1's raw exit code: the
+    # graceful time-limit handler can exit non-zero (a DataLoader worker killed by
+    # the same SIGTERM can trip PyTorch's watchdog mid-save) even though a good
+    # checkpoint was already written -- require_checkpoint is the real check.
     require_checkpoint "$STAGE1_DIR/checkpoints" || exit $?
     run_training 2150m \
       uv run python train_flock_dit.py --config "$CONFIG" \
@@ -142,7 +146,11 @@ case "$EXPERIMENT_ID" in
       train.diffusion_forcing=true \
       "output_dir=$STAGE1_DIR" \
       "experiment_name=${RUN_ID}_stage1" \
-      "${COMMON_OVERRIDES[@]}" || exit $?
+      "${COMMON_OVERRIDES[@]}"
+    # Gate stage 2 on an actual checkpoint, not stage 1's raw exit code: the
+    # graceful time-limit handler can exit non-zero (a DataLoader worker killed by
+    # the same SIGTERM can trip PyTorch's watchdog mid-save) even though a good
+    # checkpoint was already written -- require_checkpoint is the real check.
     require_checkpoint "$STAGE1_DIR/checkpoints" || exit $?
     run_training 2150m \
       uv run python train_flock_dit.py --config "$CONFIG" \
@@ -158,7 +166,11 @@ case "$EXPERIMENT_ID" in
       --config config/train_flockdit_latent_single_stream.yaml \
       "output_dir=$STAGE1_DIR" \
       "experiment_name=${RUN_ID}_stage1" \
-      "${COMMON_OVERRIDES[@]}" || exit $?
+      "${COMMON_OVERRIDES[@]}"
+    # Gate stage 2 on an actual checkpoint, not stage 1's raw exit code: the
+    # graceful time-limit handler can exit non-zero (a DataLoader worker killed by
+    # the same SIGTERM can trip PyTorch's watchdog mid-save) even though a good
+    # checkpoint was already written -- require_checkpoint is the real check.
     require_checkpoint "$STAGE1_DIR/checkpoints" || exit $?
     run_training 2150m \
       uv run python train_flock_dit.py --config "$CONFIG" \
