@@ -54,6 +54,7 @@ class SimClipGenerator:
         warmup_steps: int,
         threads: int | None,
         return_actions: bool = False,
+        return_gt_positions: bool = False,
     ):
         self.sim_cfg_container = sim_cfg_container
         self.num_frames = int(num_frames)
@@ -65,6 +66,14 @@ class SimClipGenerator:
         self.threads = threads
         # World-model streaming also needs per-frame actions; the VAE path leaves this off.
         self.return_actions = bool(return_actions)
+        # Eval-only: also return every simulated boid's position (not just the camera
+        # agents'), so a GT-vs-detection metric can be computed without disk-recorded
+        # parquet. Off by default -- training never sets this, so its output shape is
+        # byte-for-byte unchanged.
+        self.return_gt_positions = bool(return_gt_positions)
+        assert not self.return_gt_positions or self.return_actions, (
+            "return_gt_positions is only wired up alongside return_actions (eval use)"
+        )
         self._runtime = None
 
     def _ensure_init(self):
@@ -102,6 +111,7 @@ class SimClipGenerator:
         params = EnvParams(ec)
         uv_grid = build_uv_grid(ec.canvas_w, ec.canvas_h)
         num_partial = self.num_partial_agents
+        return_gt = self.return_gt_positions  # plain Python bool, resolved once at trace time
 
         @partial(jax.jit, static_argnames=("steps",))
         def warmup_fn(state, steps: int):
@@ -118,11 +128,14 @@ class SimClipGenerator:
                 next_state, _, _, _ = step(carry, jnp.float32(0.0), params)
                 frame_f = render(next_state, params, uv_grid)
                 frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
-                return next_state, (
+                out = (
                     frame_u8,
                     next_state.boids.positions[:num_partial],
                     next_state.boids.accelerations[:num_partial],  # per-agent (acc_x, acc_y)
                 )
+                if return_gt:
+                    out = out + (next_state.boids.positions,)  # ALL simulated boids, unsliced
+                return next_state, out
 
             return jax.lax.scan(one, state, None, length=steps)
 
@@ -143,7 +156,9 @@ class SimClipGenerator:
         uint8 RGB. If ``return_actions``, returns ``(clips, actions)`` where actions is
         ``(windows*agents, T, 2)`` -- each agent's per-frame acceleration ``(acc_x, acc_y)``,
         the signal the world model conditions on (still at pixel-frame rate; aggregate to
-        latent frames at encode time)."""
+        latent frames at encode time). If ``return_gt_positions``, also returns
+        ``gt_positions (windows, T, num_agents, 2)`` -- every simulated boid's world
+        position at each of the ``T`` output frames (eval-only; unused by training)."""
         self._ensure_init()
         rt = self._runtime
         size = rt["partial_size"]
@@ -161,8 +176,18 @@ class SimClipGenerator:
             np.empty((self.windows_per_episode, self.num_partial_agents, T, 2), np.float32)
             if self.return_actions else None
         )
+        gt_positions = None
         for w in range(self.windows_per_episode):
-            state, (frames, positions, accels) = rt["chunk"](state, self.clip_span)
+            chunk_out = rt["chunk"](state, self.clip_span)
+            if self.return_gt_positions:
+                state, (frames, positions, accels, full_positions) = chunk_out
+                full_positions = np.asarray(full_positions)  # (span, num_agents_full, 2)
+                if gt_positions is None:
+                    gt_positions = np.empty(
+                        (self.windows_per_episode, T, full_positions.shape[1], 2), np.float32
+                    )
+            else:
+                state, (frames, positions, accels) = chunk_out
             frames = np.asarray(frames)          # (span, H, W, 3) uint8
             positions = np.asarray(positions)    # (span, K, 2)
             accels = np.asarray(accels)          # (span, K, 2)
@@ -171,7 +196,11 @@ class SimClipGenerator:
                     clips[w, k, t_out] = crop_partial(frames[t], positions[t, k], size)
                     if actions is not None:
                         actions[w, k, t_out] = accels[t, k]
+                if gt_positions is not None:
+                    gt_positions[w, t_out] = full_positions[t]
         clips = clips.reshape(-1, T, size, size, 3)
+        if gt_positions is not None:
+            return clips, actions.reshape(-1, T, 2), gt_positions
         if actions is not None:
             return clips, actions.reshape(-1, T, 2)
         return clips
