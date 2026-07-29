@@ -7,9 +7,17 @@ missed by a grayscale threshold, but V~1 for any bright dart, so V finds white
 components -> centroids. Also reads each blob's hue (identifies camera agents in
 the color setups; NaN for achromatic white darts). One detector for every setup.
 
-Gradient setups: subtract the expected gradient from the frame first (see
-``gt_project.expected_gradient_crop``) so the background is ~black again, then
-detect as usual.
+Gradient setups: don't subtract the *expected* (commanded-camera-pose) gradient —
+the world model drifts from commanded GT, so an analytic subtraction would leave a
+residual wherever the model's rendered gradient disagrees with the geometrically
+"correct" one, and that residual would itself get mistaken for a dart. Instead
+estimate the background empirically, per frame, via greyscale morphological
+opening (``background_size``): darts are compact/high-frequency, the gradient is
+smooth/low-frequency by construction, so an opening with a kernel larger than any
+real dart but much smaller than the frame removes the darts and leaves whatever
+gradient the model actually painted — correct or not, no GT camera geometry
+needed. Subtracting that estimate flattens the background back to ~black before
+thresholding as usual.
 """
 
 from __future__ import annotations
@@ -43,9 +51,23 @@ def _blob_hue(f: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
     return hues
 
 
+def _estimate_background(f: np.ndarray, size: int) -> np.ndarray:
+    """Per-channel greyscale opening: erosion then dilation with a ``size``x``size``
+    square structuring element. Erosion replaces every pixel with the min over its
+    neighborhood -- big enough to swallow a compact dart entirely, so the result at
+    a dart's location falls back to the surrounding (background) value; dilation
+    (max over the same neighborhood) then restores the smooth background level
+    everywhere, undoing erosion's shrink of the true background regions. Net
+    effect: darts erased, smooth low-frequency background (whatever the model
+    actually painted) preserved.
+    """
+    return ndimage.grey_opening(f, size=(size, size, 1))
+
+
 def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
                  max_elong: float = 5.0, max_extent: int = 40,
-                 border_px: int = 5, border_min_size: int = 25) -> dict:
+                 border_px: int = 5, border_min_size: int = 25,
+                 background_size: int | None = None) -> dict:
     """Find darts in one RGB frame.
 
     Boids render as compact blobs (bbox elongation ~1.4, extent ~13px, size ~64);
@@ -62,13 +84,24 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
 
     Args:
         frame_rgb: ``(H, W, 3)`` RGB, float in [0,1] or uint8.
+        background_size: if set (gradient-background setups), subtract a per-frame
+            morphological-opening background estimate (kernel ``background_size``)
+            before thresholding, so a nonzero background doesn't trip ``v_thresh``.
+            Hue is still read from the ORIGINAL frame, not the residual, so color
+            identity is unaffected. Leave ``None`` for solid-background setups
+            (unchanged behavior).
     Returns dict:
         ``centroids`` ``(N, 2)`` as ``(u=col, v=row)`` (V-weighted),
         ``sizes`` ``(N,)`` pixel counts,
         ``hue`` ``(N,)`` in [0,1) (NaN for white darts).
     """
     f = _to_float01(frame_rgb)
-    V = f.max(axis=-1)                            # HSV value
+    if background_size is not None:
+        bg = _estimate_background(f, background_size)
+        det_frame = np.clip(f - bg, 0.0, None)
+    else:
+        det_frame = f
+    V = det_frame.max(axis=-1)                    # HSV value (on background-subtracted frame if requested)
     lbl, n = ndimage.label(V > v_thresh)
     if n == 0:
         z = np.zeros((0,), np.float32)
