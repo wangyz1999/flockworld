@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from omegaconf import OmegaConf
 
 from modeling.configs import load_cfg
 from modeling.data.flocking_latent_dataset import FlockingLatentMultiDataset
@@ -45,7 +46,9 @@ from train_flock_dit import build_decode_fn
 NUM_SIM_BOIDS = 100  # all boids are in the parquet; any can be a GT mark
 
 
-def _gt_positions(cfg, episode_id):
+def _gt_positions(cfg, ds, episode_id):
+    if hasattr(ds, "gt_positions"):          # streaming: positions come straight from the sim
+        return ds.gt_positions(episode_id)
     return gp.load_gt_positions(
         Path(cfg.data.root) / "state_action" / f"{episode_id}.parquet", NUM_SIM_BOIDS)
 
@@ -55,9 +58,13 @@ def _num_camera_agents(cfg, default: int) -> int:
 
     Read from the dataset's saved ``settings.yaml`` (colored agent k -> hue
     k/n_cam), falling back to ``default`` (the rolled-out agent count).
+    Streaming configs have no ``data.root`` at all -- always use ``default``.
     """
     from omegaconf import OmegaConf
-    p = Path(cfg.data.root) / "settings.yaml"
+    root = cfg.data.get("root", None)
+    if root is None:
+        return int(default)
+    p = Path(root) / "settings.yaml"
     if p.exists():
         s = OmegaConf.load(p)
         for key in ("collection.partial_agents", "partial_agents", "num_camera_agents"):
@@ -75,18 +82,26 @@ def _load_model(cfg, output_dir, device):
     return m.eval()
 
 
-def _decode_detect(lat, decode_fn):
+def _decode_detect(lat, decode_fn, background_size=None):
     """lat (P, T, z, h, w) -> (frames[agent] (Tp,H,W,3) uint8, dets[agent][frame] dict).
 
     Decode each agent's latents ONCE; keep the pixel frames (for pixel_consistency)
     and run the dart detector on them (centroids+hue for tier_a / pair_consistency).
+    ``background_size``: gradient-background setups only -- see boid_detect.detect_boids.
     """
     frames_all, dets_all = [], []
     for j in range(lat.shape[0]):
         frames = ov.to_uint8(decode_fn(lat[j]).detach().cpu())
         frames_all.append(frames)
-        dets_all.append([detect_boids(frames[t]) for t in range(len(frames))])
+        dets_all.append([detect_boids(frames[t], background_size=background_size)
+                          for t in range(len(frames))])
     return frames_all, dets_all
+
+
+def _cfg_has_gradient(cfg) -> bool:
+    """True if this config's sim overrides turn on the gradient background."""
+    overrides = OmegaConf.select(cfg, "data.streaming.sim_overrides", default=None) or []
+    return any(str(o).strip() == "rendering.background_gradient=true" for o in overrides)
 
 
 def _rollout_model(model, frames, actions, ctx, T, wf, steps):
@@ -122,7 +137,7 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
     for e in range(n_ep):
         ep = ds.full_episode(e); ctx = int(ep["context_len"]); T = min(n_lat, ep["frames"].shape[1])
         cam_idx = [ai - 1 for ai in ep["agent_indices"]]
-        pos = _gt_positions(cfg, ep["episode_id"])
+        pos = _gt_positions(cfg, ds, ep["episode_id"])
         frames = ep["frames"].unsqueeze(0).to(device)
         actions = ep["actions"].unsqueeze(0).to(device)
         lat = {
@@ -132,7 +147,7 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
         if args.baseline == "single":
             lat["baseline"] = _rollout_single(baseline_model, frames, actions, ctx, T, wf, steps)
         for s in cols:
-            frames, dets = _decode_detect(lat[s], decode_fn)
+            frames, dets = _decode_detect(lat[s], decode_fn, background_size=args.background_size)
             cents = [[d["centroids"] for d in ag] for ag in dets]   # tier_a needs centroids only
             A[s].append(cs.tier_a(cents, pos, cam_idx))
             B[s].append(pc.pair_consistency(dets, cam_idx, n_cam))   # GT-free (no pos)
@@ -203,7 +218,7 @@ def run_overlay(cfg, model, ds, decode_fn, device, args):
             frames = ep["frames"].unsqueeze(0).to(device)
             actions = ep["actions"].unsqueeze(0).to(device)
             lat = _rollout_model(model, frames, actions, ctx, T, wf, int(args.steps))
-        positions = _gt_positions(cfg, ep["episode_id"])
+        positions = _gt_positions(cfg, ds, ep["episode_id"])
         views = [ov.draw_gt_marks(ov.upscale(ov.to_uint8(decode_fn(lat[j]).detach().cpu()), int(args.upscale)),
                                   positions, ep["agent_indices"][j] - 1) for j in range(lat.shape[0])]
         write_mp4(ov.tile(views), str(out / f"ep{ep['episode_id']}_{args.source}.mp4"), int(args.sim_fps))
@@ -219,7 +234,9 @@ def main():
     ap.add_argument("--source", choices=["gt", "pred"], default="pred", help="overlay mode only.")
     ap.add_argument("--baseline", choices=["single", "none"], default="single",
                     help="metrics floor: single=independent single-agent model (clean); none=skip.")
-    ap.add_argument("--baseline-config", default="config/train_flockdit_latent.yaml")
+    ap.add_argument("--baseline-config", default=None,
+                    help="defaults to the single-agent disk config, or the streaming single-agent "
+                         "config when --config is a streaming config.")
     ap.add_argument("--baseline-output-dir", default=None,
                     help="output_dir of the single-agent model (for --baseline single).")
     ap.add_argument("--episodes", type=int, default=3)
@@ -227,21 +244,64 @@ def main():
     ap.add_argument("--sim-fps", type=int, default=30)
     ap.add_argument("--steps", type=int, default=50, help="Euler steps per window.")
     ap.add_argument("--upscale", type=int, default=2)
+    ap.add_argument("--eval-seed", type=int, default=0,
+                    help="streaming only: base seed for the held-out eval episodes.")
+    ap.add_argument("--background-size", type=int, default=None,
+                    help="dart-detector background-subtraction kernel, gradient-background "
+                         "setups only (see boid_detect.detect_boids). Auto-defaults to 31 when "
+                         "the config's sim_overrides set rendering.background_gradient=true; "
+                         "pass explicitly to override, or 0 to force it off.")
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
 
     cfg = load_cfg(args.config, args.overrides)
-    if not bool(cfg.data.get("latent", False)):
+    if args.background_size is None and _cfg_has_gradient(cfg):
+        args.background_size = 31
+        print("[gradient background detected] background_size defaulting to 31 "
+              "(pass --background-size to override, or --background-size 0 to force off)")
+    if args.background_size == 0:
+        args.background_size = None
+    streaming = bool(OmegaConf.select(cfg, "data.streaming.enabled", default=False))
+    if not streaming and not bool(cfg.data.get("latent", False)):
         raise SystemExit("eval_flock_multi requires latent mode (data.latent=true).")
     device = "cuda" if (torch.cuda.is_available() and str(cfg.device) != "cpu") else "cpu"
-    decode_fn = build_decode_fn(cfg)
-    ds = FlockingLatentMultiDataset(
-        cache_dir=Path(cfg.data.root) / cfg.data.get("latent_cache_dir", "latent_cache"),
-        split="val", val_fraction=cfg.data.val_fraction,
-        num_context_frames=cfg.data.num_context_frames,
-        num_future_frames=cfg.data.num_future_frames,
-        random_clip=False, num_agents=int(cfg.data.num_agents),
-    )
+
+    if streaming:
+        from modeling.eval.streaming_eval_dataset import (
+            StreamingMultiEvalDataset, fit_train_stats, make_decode_fn, normalize_frames,
+        )
+        from modeling.models.frozen_vae import FrozenVAE
+        vae = FrozenVAE(str(cfg.vae.checkpoint_path), device=device)
+        ds = StreamingMultiEvalDataset(
+            cfg, vae, device, num_episodes=int(args.episodes), seconds=float(args.seconds),
+            sim_fps=int(args.sim_fps), eval_seed=int(args.eval_seed),
+        )
+        # ds.full_episode returns UN-normalized latents; normalize every episode's
+        # frames to THIS config's own exactly-replayed training-time stats (see
+        # streaming_eval_dataset.py docstring -- a naive eval-time refit measured
+        # ~25% off, so this replays the real calibration instead of approximating it).
+        mean, std = fit_train_stats(cfg, vae, device)
+        decode_fn = make_decode_fn(vae, device, mean, std)
+        for item in ds._items:
+            item["frames"] = normalize_frames(item["frames"], mean, std)
+        if args.baseline_config is None:
+            args.baseline_config = "config/train_flockdit_latent_single_stream.yaml"
+        if args.baseline == "single":
+            print("[warn] streaming --baseline single: the baseline model is fed frames "
+                  "normalized with the PRIMARY config's stats, not its own true training "
+                  "stats (a documented approximation here -- see compare_experiments.py "
+                  "for a per-model-exact comparison).")
+    else:
+        decode_fn = build_decode_fn(cfg)
+        ds = FlockingLatentMultiDataset(
+            cache_dir=Path(cfg.data.root) / cfg.data.get("latent_cache_dir", "latent_cache"),
+            split="val", val_fraction=cfg.data.val_fraction,
+            num_context_frames=cfg.data.num_context_frames,
+            num_future_frames=cfg.data.num_future_frames,
+            random_clip=False, num_agents=int(cfg.data.num_agents),
+        )
+        if args.baseline_config is None:
+            args.baseline_config = "config/train_flockdit_latent.yaml"
 
     model = baseline_model = None
     if args.mode == "metrics" or args.source == "pred":
