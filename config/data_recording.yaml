@@ -53,7 +53,7 @@ rendering:
   agent_color: [1.0, 1.0, 1.0]
   aa_blur: 1
   boid_alpha: 1
-  color_mode: "fixed" # fixed = all white (agent_color) | speed = HSV hue by speed | agent_id = each camera agent its own hue
+  color_mode: "fixed" # fixed = all white (agent_color) | speed = HSV hue by speed | agent_id = each camera agent its own hue | random_hue = every boid a random hue, redrawn per episode (streaming only; the recorder draws once per process)
   background_gradient: false  # true = dim position-encoding gradient background instead of background_color
   gradient_brightness: 0.3    # brightness of the gradient (only used when background_gradient: true)
   border_width: 2          # px — width of border padded inside the canvas; 0 disables

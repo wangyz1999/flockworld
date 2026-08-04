@@ -76,8 +76,11 @@ def _render_frame_js_dart(
     speed = jnp.sqrt(jnp.sum(velocities ** 2, axis=-1))
     if color_mode == "fixed":
         colors = jnp.broadcast_to(agent_color[None, :], (positions.shape[0], 3))
-    elif color_mode == "agent_id":
-        colors = boid_colors  # (N, 3) precomputed per-boid identity colors
+    elif color_mode in ("agent_id", "random_hue"):
+        # (N, 3) per-boid colors: fixed identity hues ("agent_id") or hues resampled
+        # per episode ("random_hue"). Passed in as a traced array either way, so
+        # varying it across episodes costs no recompilation.
+        colors = boid_colors
     else:  # "speed"
         hue = jnp.clip(speed / (max_speed * 2.0), 0.0, 1.0)
         colors = _hsv_to_rgb(hue, 1.0, 1.0)

@@ -97,6 +97,7 @@ class SimClipGenerator:
             env_config_from_omega,
             render,
             reset,
+            sample_boid_colors,
             step,
         )
         from flockworld.rendering.renderer import build_uv_grid
@@ -123,10 +124,10 @@ class SimClipGenerator:
             return state
 
         @partial(jax.jit, static_argnames=("steps",))
-        def chunk_fn(state, steps: int):
+        def chunk_fn(state, boid_colors, steps: int):
             def one(carry, _):
                 next_state, _, _, _ = step(carry, jnp.float32(0.0), params)
-                frame_f = render(next_state, params, uv_grid)
+                frame_f = render(next_state, params, uv_grid, boid_colors=boid_colors)
                 frame_u8 = jnp.clip(frame_f * 255.0, 0.0, 255.0).astype(jnp.uint8)
                 out = (
                     frame_u8,
@@ -146,6 +147,11 @@ class SimClipGenerator:
             "reset": reset,
             "warmup": warmup_fn,
             "chunk": chunk_fn,
+            "params": params,
+            "sample_colors": sample_boid_colors,
+            # "random_hue": redraw every boid's hue each episode, so the VAE sees
+            # arbitrary hues instead of one fixed palette.
+            "random_hue": ec.color_mode == "random_hue",
         }
 
     def clips_per_episode(self) -> int:
@@ -164,7 +170,17 @@ class SimClipGenerator:
         size = rt["partial_size"]
         T, stride = self.num_frames, self.frame_stride
 
-        state = rt["reset"](rt["jax"].random.PRNGKey(seed), rt["ec"])
+        jax = rt["jax"]
+        key = jax.random.PRNGKey(seed)
+        # Colour key is folded off the episode key rather than split from it, so the
+        # reset key stays byte-identical to what a given seed produced before this
+        # mode existed — same seed, same trajectory.
+        boid_colors = (
+            rt["sample_colors"](jax.random.fold_in(key, 0xC0107), rt["ec"].num_agents)
+            if rt["random_hue"] else rt["params"].boid_colors
+        )
+
+        state = rt["reset"](key, rt["ec"])
         if self.warmup_steps > 0:
             state = rt["warmup"](state, self.warmup_steps)
 
@@ -178,7 +194,7 @@ class SimClipGenerator:
         )
         gt_positions = None
         for w in range(self.windows_per_episode):
-            chunk_out = rt["chunk"](state, self.clip_span)
+            chunk_out = rt["chunk"](state, boid_colors, self.clip_span)
             if self.return_gt_positions:
                 state, (frames, positions, accels, full_positions) = chunk_out
                 full_positions = np.asarray(full_positions)  # (span, num_agents_full, 2)

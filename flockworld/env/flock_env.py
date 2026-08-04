@@ -95,6 +95,20 @@ def env_config_from_omega(cfg) -> EnvConfig:
     )
 
 
+def sample_boid_colors(key: jnp.ndarray, num_agents: int) -> jnp.ndarray:
+    """Random per-boid hues at full saturation and value -> ``(N, 3)`` float32 RGB.
+
+    Hue is uniform over the full circle; S and V are pinned to 1.0, which is HSL
+    lightness 0.5 for every hue. So the colour varies only in hue, at the same
+    lightness the ``agent_id`` identity hues already use. (Perceived luminance
+    still differs between hues — yellow reads brighter than blue — since that is
+    a property of sRGB, not of the sampling.)
+    """
+    hues = jax.random.uniform(key, (int(num_agents),), dtype=jnp.float32)
+    ones = jnp.ones((int(num_agents),), dtype=jnp.float32)
+    return _hsv_to_rgb(hues, ones, ones)
+
+
 # ── JAX constants from config (created once, reused) ────────────────────
 
 class EnvParams:
@@ -143,6 +157,11 @@ class EnvParams:
             cam = _hsv_to_rgb(hues, jnp.ones(n_cam), jnp.ones(n_cam))          # (n_cam, 3)
             rest = jnp.ones((int(ec.num_agents) - n_cam, 3), dtype=jnp.float32)
             self.boid_colors = jnp.concatenate([cam, rest], axis=0)
+        elif ec.color_mode == "random_hue":
+            # Placeholder draw. Callers that vary colour per episode pass their own
+            # via ``sample_boid_colors`` -> ``render(..., boid_colors=...)``; this
+            # keeps single-shot callers (recorder, eval) rendering a valid frame.
+            self.boid_colors = sample_boid_colors(jax.random.PRNGKey(0), ec.num_agents)
         else:
             self.boid_colors = jnp.ones((int(ec.num_agents), 3), dtype=jnp.float32)
 
@@ -235,15 +254,28 @@ def step(state: EnvState, action: jnp.ndarray, p: EnvParams):
     return new_state, reward, done, info
 
 
-def render(state: EnvState, p: EnvParams, uv_grid: jnp.ndarray) -> jnp.ndarray:
-    """Render the current state to an (H, W, 3) float32 image (JIT-compiled)."""
+def render(
+    state: EnvState,
+    p: EnvParams,
+    uv_grid: jnp.ndarray,
+    boid_colors: jnp.ndarray | None = None,
+) -> jnp.ndarray:
+    """Render the current state to an (H, W, 3) float32 image (JIT-compiled).
+
+    ``boid_colors`` overrides ``p.boid_colors`` for this frame — used by
+    ``color_mode="random_hue"`` to vary hues per episode without rebuilding
+    ``EnvParams`` or retracing the renderer. Ignored unless the colour mode reads
+    per-boid colours (``agent_id`` / ``random_hue``).
+    """
     return render_frame(
         state.boids.positions,
         state.boids.velocities,
         uv_grid,
         p.agent_size,
         p.agent_render_radius,
-        p.agent_color, p.boid_colors, p.background_image,
+        p.agent_color,
+        p.boid_colors if boid_colors is None else boid_colors,
+        p.background_image,
         p.aa_blur,
         p.max_speed, p.boid_alpha,
         p.color_mode,
