@@ -215,16 +215,8 @@ __marimo__/
 # SLURM run artifacts: per-run checkpoint dirs, eval videos and logs (~GBs)
 /flockdit_streaming_20260715/
 
-# LaTeX build output (main.log is already covered by *.log above; main.txt is a
-# pdftotext dump of main.pdf). Keep only the sources under paper/.
-paper/*.aux
-paper/*.bbl
-paper/*.blg
-paper/*.fdb_latexmk
-paper/*.fls
-paper/*.out
-paper/*.pdf
-paper/main.txt
+# The paper draft (sources and LaTeX build output) stays local, not in the repo.
+/paper/
 
 # Un-ignore our package's env submodule (matched by env/ above)
 !flockworld/env/
