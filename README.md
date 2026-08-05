@@ -1,11 +1,33 @@
 # FlockWorld
 
-JAX-based boid flocking simulation wrapped as a Gymnasium environment.
-The default configuration is tuned for offline video generation: 1500 boids,
-reflecting canvas boundaries with an agent-size inset, speed-hue tinting, and
-the original five-point JS/PixiJS dart shape.
-Designed for generating training videos for video-generation world models
-with realistic multi-agent behavior.
+**A multi-agent world model of an egocentric flocking simulation.**
+
+Ten agents fly in one shared arena, each seeing only its own egocentric crop. A
+single generative video model predicts all ten views jointly — and the question
+this repository is built to answer is whether those ten views stay *mutually
+consistent*: when agent 3 sees agent 7 off to its left, does agent 7's own view
+agree that agent 3 is off to its right?
+
+📄 **Paper:** _to appear_ · 🎬 [Rollouts](#rollouts) · 🧪 [Experiments](#experiments) · 📊 [Reproducing the paper](#reproducing-the-paper)
+
+---
+
+## Rollouts
+
+> Ten egocentric views of one shared arena, generated autoregressively for 10
+> seconds from two context frames.
+
+---
+
+## What's in here
+
+| Part | Framework | Where |
+|---|---|---|
+| Flocking simulation, rendering, Gymnasium environment | JAX | `flockworld/` |
+| Video autoencoder + FlockDiT world model + training | PyTorch | `modeling/` |
+| Evaluation, metrics, probes, figure generation | NumPy/SciPy | `modeling/eval/`, root-level scripts |
+
+Training data is **simulated on the fly** — there is no dataset to download.
 
 ## Installation
 
@@ -13,10 +35,12 @@ with realistic multi-agent behavior.
 uv sync            # or: pip install -e .
 ```
 
-Requires Python >= 3.13. On Windows JAX runs on CPU; on Linux it will
-automatically use CUDA 12.
+Requires Python >= 3.13. On Windows JAX runs on CPU; on Linux both JAX and
+PyTorch use CUDA 13 (`jax[cuda13]`, torch `cu130` wheels).
 
 ## Quick start
+
+### 1. Look at the environment
 
 Record a 30-second video with default settings:
 
@@ -51,7 +75,106 @@ Structured collection mode writes a timestamped dataset under `outputs/` with
 `collection.partial_agents`, and per-episode trajectory files under
 `trajectory/`.
 
-## Gymnasium API
+### 2. Train
+
+The world model predicts in the latent space of a frozen video autoencoder, so
+training is two steps: train the VAE, then train FlockDiT on top of it.
+
+```bash
+# (a) video autoencoder, in the agent-color condition
+uv run python train_vae.py --config config/train_vae_color_stream.yaml
+
+# (b) world model — point cfg.vae.checkpoint_path at the VAE you just trained
+uv run python train_flock_dit.py --config config/train_flockdit_latent_multi_stream.yaml
+```
+
+Single- vs multi-agent is selected by `data.num_agents` in the config. Both
+entry points take OmegaConf dot-list overrides after the config path:
+
+```bash
+uv run python train_flock_dit.py --config config/train_flockdit.yaml \
+    device=cpu dataloader.batch_size=1 train.epochs=1     # CPU smoke test
+```
+
+The streaming configs simulate fresh clips throughout training. To train from a
+pre-recorded corpus instead, cache latents once with
+`precompute_latents.py` and use one of the non-streaming configs.
+
+### 3. Evaluate
+
+```bash
+# qualitative: tile all 10 rolled-out views into one grid video
+uv run python eval_flock_multi.py --config <experiment.yaml> --mode overlay --source pred
+
+# quantitative: per-view fidelity + cross-view consistency, with ceiling and floor
+uv run python eval_flock_multi.py --config <experiment.yaml> \
+    --mode metrics --episodes 6 --seconds 10 --baseline single
+
+# all experiments side by side in one table
+uv run python compare_experiments.py --include exp01_baseline exp03_diffusion_forcing \
+    --episodes 6 --seconds 10
+```
+
+## The environment
+
+### Simulation
+
+A 720x720 pixel arena containing 100 boids following the three classic Reynolds
+steering rules — alignment, cohesion, separation — computed over neighbors
+within a 25-pixel vision radius (weighted 1.1, 1.0, and 1.5). The net steering
+force is clamped to 0.2 per step, speeds to [1, 4] pixels per step with a small
+drag. **Walls reflect**: a boid reaching the boundary is clamped inside and the
+offending velocity component negated, so flocks bounce rather than wrap. Each
+boid renders as a 10-pixel dart — the original five-point JS/PixiJS shape — and
+a 2-pixel white border marks the arena edge.
+
+One simulation step is one video frame at 30 fps. Episodes are seeded
+deterministically and the first 60 warm-up steps are discarded, so recordings
+start from settled flocking behavior and are exactly reproducible.
+
+### Egocentric views
+
+The first ten boids are designated **camera agents**. Each observes a 128x128
+crop of the arena centered on itself, zero-padded past the boundary, with the
+crop center locked to integer pixels so the focal agent doesn't jitter in its
+own view. One episode therefore yields ten synchronized partial views of the
+same flock — the structure the consistency metrics rely on.
+
+The simulator also logs full state (positions, velocities, accelerations,
+headings of every boid at every frame). This is **never** consumed by the world
+model; it exists only as evaluation ground truth.
+
+### Actions
+
+A camera agent's action is its 2D acceleration `(a_x, a_y)` — the net steering
+force from the flocking rules, in raw arena units. Because the world model
+predicts in a temporally compressed latent space, per-frame actions are pooled
+to the latent timeline with a causal `1+4k` grouping: the first latent frame
+carries the first video frame's action, and each later latent frame carries the
+mean of the four video frames it spans.
+
+### Visual conditions
+
+In the bare environment every boid is an identical white dart on a uniform
+background, so crops are anonymous and nearly translation-invariant. Three
+conditions add identity and position cues:
+
+| Condition | Cue | Config |
+|---|---|---|
+| **Agent color** | camera agent *k* gets hue *k*/10; the other 90 boids stay white | `rendering.color_mode=agent_id` |
+| **Background color** | faint gradient encodes absolute position (red with *x*, green with *y*) | `rendering.background_gradient=true` |
+| **Both** | combined | both flags |
+
+Each is a rendering change only — dynamics, seeds, and recording setup are
+identical. The agent-color cue is what makes the ground-truth-free consistency
+metrics possible (they localize agents in each other's views by hue), so the
+main experimental campaign runs in that condition.
+
+Other available color modes: `fixed` (all white, the default),
+`speed` (HSV hue by speed), `random_hue` (every boid a random hue, redrawn per
+episode).
+
+### Gymnasium API
 
 ```python
 from omegaconf import OmegaConf
@@ -77,15 +200,197 @@ for _ in range(100):
 - **Action**: `Box(-pi, pi, shape=(1,))` — heading angle when `env.controlled_agent=true`
 - **Reward**: `0.0` placeholder (to be defined)
 
-## Configuration
+### Configuration
 
-All defaults live in `config/data_recording.yaml`. See the full argument and config reference in [docs/CONFIG.md](/home/wangy/wsl_projects/flockworld/docs/CONFIG.md).
+All simulation defaults live in `config/data_recording.yaml`. See the full
+argument and config reference in [docs/CONFIG.md](docs/CONFIG.md).
 
-For a fixed color theme instead of JS speed-hue tinting:
+To tint all boids a fixed custom color (the default is white):
 
 ```bash
 python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
 ```
+
+## Model
+
+### Video autoencoder
+
+A small **causal 3D convolutional video VAE** in the style of the Wan video
+VAE. Input is patchified 2x2 spatially, then passed through three spatial
+downsampling stages (two of which also downsample time), for 16x compression in
+space and 4x in time. A 128x128 video of *T* frames becomes a latent of shape
+`8 x T_lat x 8 x 8` with `T_lat = 1 + (T-1)/4`. All temporal convolutions are
+causal, so no latent frame depends on future video frames.
+
+Trained from scratch on recorded clips with an L1 reconstruction loss and a
+KL penalty at weight 1e-6 — no perceptual or adversarial term; the rendered
+world is simple enough that L1 recovers it sharply. Afterwards the autoencoder
+is **frozen** and the world model trains and rolls out entirely in its latent
+space, using the deterministic posterior mean.
+
+Each visual condition needs its own condition-matched autoencoder
+(`config/train_vae*.yaml`).
+
+### FlockDiT
+
+A **flow-matching diffusion transformer** over the latent grid. Base
+configuration: 8 blocks, width 512, 8 attention heads, ~27.5M parameters — used
+for every experiment in the paper.
+
+- **Objective.** Flow matching: interpolate `z_s = (1-s) z_1 + s z_0` between a
+  latent clip and Gaussian noise, and regress the velocity `z_0 - z_1`. Noise
+  levels are discretized into 1,000 steps. Each training clip is 6 latent
+  frames: 2 context + 4 targets. Teacher-forced by default (context clean, loss
+  on targets only). Sampling integrates with a 50-step Euler solver; no
+  classifier-free guidance, since actions are always provided.
+- **Diffusion forcing** (`train.diffusion_forcing`). *Every* frame, context
+  included, gets its own independent noise level and the loss covers all frames,
+  so the model learns to predict from degraded context — matching what it meets
+  at rollout. Inference is unchanged.
+- **Tokenization.** A 1x1x1 convolution embeds each latent vector to model
+  width, so every latent vector is one token: 64 tokens per agent per latent
+  frame. With 10 agents and 6 frames a clip is 3,840 tokens, laid out
+  frame-major.
+- **Positional encoding.** Factorized 3D rotary embeddings (RoPE) over (time,
+  height, width). Queries and keys are RMS-normalized before rotation.
+- **Attention.** Block-causal in time, unrestricted within a time step: every
+  token of latent frame *t* — across all spatial positions **and all agents** —
+  attends to every token of frames <= *t*. Cross-agent consistency is therefore
+  possible by construction.
+- **Action conditioning.** AdaLN-zero. A conditioning vector sums a sinusoidal
+  noise-level embedding and an action embedding; a per-block linear head maps it
+  to six modulation parameters, initialized at identity. Conditioning resolves
+  per latent frame and per agent, broadcast over that frame's 64 spatial tokens.
+- **Rollout.** Sliding window: given the two most recent latent frames, denoise
+  the next four jointly, append, and re-use the last two as the next context.
+  Everything past the initial two ground-truth frames is the model's own
+  prediction.
+
+### Multi-agent conditioning
+
+The architecture already attends across agents; what varies is how tokens learn
+*which agent they belong to* and *whose actions to obey*.
+
+- **Interleaved views** (baseline). All agents share the same spatial RoPE
+  coordinates — the ten views sit on top of each other in positional geometry.
+  Identity comes from a learned additive per-agent embedding, and each agent's
+  tokens are conditioned on that agent's own actions only. Other agents'
+  actions are visible only indirectly, through attention.
+- **Tiled views** (`model.tiled_rope`, `model.broadcast_actions`,
+  `train.shared_timesteps`). The ten views are offset into distinct positions of
+  a 2x5 tiling of the RoPE plane, so positional geometry itself distinguishes
+  them and the additive agent embedding is removed. Actions are **broadcast**:
+  all ten are embedded, tagged with a learned per-agent vector, and combined
+  into one conditioning vector modulating every token — the model must learn
+  which actions affect which view. With diffusion forcing, all tiles of a time
+  step share one noise level, so the ten views are denoised as a unit.
+- **Two-stage training** (`train.warm_start`). Pretrain a single-agent model on
+  individual streams, then initialize the multi-agent model from it. Only the
+  multi-agent-specific parameters (agent embeddings, action-combination head)
+  start fresh; the optimizer state resets.
+
+## Experiments
+
+Every run trains the same 27.5M-parameter model for **48 hours of wall clock on
+one RTX 4090**, in the agent-color condition, with identical optimization
+settings — only the listed ingredients differ. Two-stage runs split the same
+budget into 12h single-agent pretraining + 36h multi-agent training. Fixing
+wall clock rather than step count means each mechanism pays its own overhead.
+
+| # | Experiment | Views | Objective | Curriculum | Config |
+|---|---|---|---|---|---|
+| 1 | Baseline | interleaved | teacher forcing | one-stage | `train_flockdit_latent_multi_stream.yaml` |
+| 2 | Tiled views | tiled | teacher forcing | one-stage | `train_flockdit_latent_multi_stream_tiled.yaml` |
+| 3 | Diffusion forcing | interleaved | diffusion forcing | one-stage | `train_flockdit_latent_multi_stream_df.yaml` |
+| 4 | Two-stage | interleaved | teacher forcing | two-stage | `train_flockdit_latent_multi_stream_twostage.yaml` |
+| 5 | Density | interleaved | teacher forcing | one-stage | `train_flockdit_latent_multi_stream_dense.yaml` |
+| 6 | Tiled + DF | tiled | diffusion forcing | one-stage | `train_flockdit_latent_multi_stream_tiled_df.yaml` |
+| 7 | Tiled + DF + two-stage | tiled | diffusion forcing | two-stage | `train_flockdit_latent_multi_stream_triple.yaml` |
+| 8 | Tiled + two-stage | tiled | teacher forcing | two-stage | `train_flockdit_latent_multi_stream_twostage_tiled.yaml` |
+
+Experiments 2–4 turn on one ingredient each, isolating it against the baseline.
+Experiment 5 doubles environment density (360x360 arena, 25 boids, preserving
+boids per unit area) to test whether consistency fails simply because colored
+agents meet too rarely to learn from. Experiments 6–8 plus experiment 2 form a
+2x2 factorial over {diffusion forcing, two-stage} on top of tiled views;
+experiment 7 is the full MIRA recipe.
+
+The single-agent configuration
+(`config/train_flockdit_latent_single_stream.yaml`) serves both as the two-stage
+pretrain and as the evaluation **floor**.
+
+## Reproducing the paper
+
+Each one-stage experiment:
+
+```bash
+timeout 48h python train_flock_dit.py --config <experiment.yaml> \
+    data.streaming.clips_per_epoch=20000 train.epochs=-1 train.save_every=2
+```
+
+The wall-clock cutoff implements the fixed-budget protocol; step checkpoints
+every 1000 steps make the cutoff lossless. Two-stage experiments chain two such
+commands — 12h on the single-agent config, then 36h on the multi-agent config
+with `train.warm_start` pointing at the single-agent checkpoint directory (the
+warm start loads weights only). Experiment 7 additionally enables diffusion
+forcing in its single-agent stage so both stages share the objective.
+
+Evaluation replays recorded actions over 10-second rollouts (75 latent frames,
+300 video frames) with 50 Euler steps per window.
+
+**Determinism.** Simulator, data splits, and training use fixed seeds (42
+throughout); episode seeds are `base + episode index`, so evaluation episodes
+and the streamed training distribution are reproducible from the configs alone.
+The VAE checkpoint is fixed across all experiments.
+
+Job scripts for the SLURM campaign are under `jobs/`, and per-campaign notes
+under [docs/experiment_log/](docs/experiment_log/).
+
+## Evaluation and metrics
+
+All metrics run on rendered pixels through a dart detector: frames are
+thresholded on brightness, connected components become detections with
+sub-pixel centroids, and each detection's mean hue either identifies it as a
+specific camera agent or marks it as an anonymous white boid. Blobs matching
+the arena border are rejected, and detections at the crop center are excluded
+from cross-view metrics since they belong to the view's own focal agent.
+
+**Tier A — per-view fidelity (vs. ground truth).** Ground-truth positions are
+projected into each crop and matched to detections by nearest neighbor within 6
+pixels. *Detection rate* is the fraction of visible ground-truth boids matched;
+*position error* the mean pixel error of matches; *detections per frame*, read
+against the ground-truth count, exposes over- or under-rendering. These
+legitimately decay for a model that diverges from the reference while remaining
+internally coherent — they measure fidelity, not consistency.
+
+**Tier B — cross-view consistency (ground-truth-free).** The ten views check
+each other, never touching simulator state. When agent *b*'s dart is detected in
+agent *a*'s view at offset `d_ab` from center, *a* has claimed "*b* is at offset
+`d_ab` from me". Since crops are agent-centered at 1:1 scale, consistent views
+must make mirrored claims, `d_ba ≈ -d_ab`. From this:
+
+- **reciprocity** — fraction of sightings that are mutual
+- **displacement error** — `||d_ab + d_ba||` on reciprocal frames; zero iff the views agree on the offset
+- **motion error** — frame-to-frame disagreement of that offset, isolating agreement on relative motion
+- **white correspondence** — fraction of anonymous white darts one view places in the shared region that the other corroborates
+- **white count error** — disagreement in white-dart counts in the overlap
+- **pixel consistency** — PSNR and SSIM between the two crops warped onto their overlap
+
+Rates are self-triggered — a model that renders few other agents makes few, easy
+claims — so every rate is reported alongside its volume counts.
+
+**Ceiling and floor.** The *ceiling* decodes real ground-truth latents with no
+rollout, isolating VAE reconstruction and detector noise from prediction drift.
+The *floor* rolls out each of the ten views with an independent single-agent
+model — the "why not just run ten single-agent models?" bar.
+
+For the no-color condition, `modeling/eval/heading_consistency.py` provides the
+same identity-and-consistency analysis using dart *headings* instead of hues.
+
+## Results
+
+Interim numbers and per-experiment notes live in
+[docs/experiment_log/](docs/experiment_log/).
 
 ## Render benchmark
 
@@ -100,76 +405,55 @@ The benchmark writes `output/benchmarks/render_speed.json`,
 `output/benchmarks/render_speed.svg`. It also writes
 `output/benchmarks/render_speed_logx.svg` with a logarithmic x-axis.
 
-## Project structure
+## Repository structure
 
 ```
-flockworld/
+flockworld/            simulation + environment (JAX)
   core/
-    types.py          State dataclasses (BoidState, EnvState)
-    boids.py          Flocking rules: separation, alignment, cohesion
+    types.py           State dataclasses (BoidState, EnvState)
+    boids.py           Flocking rules: separation, alignment, cohesion
   rendering/
-    primitives.py     SDF math: smoothstep, rotate_2d, sd_triangle
-    renderer.py       Compose full frame from BoidState
+    primitives.py      SDF math: smoothstep, rotate_2d, sd_triangle
+    renderer.py        Compose full frame from BoidState
   env/
-    flock_env.py      Pure-JAX reset / step functions
-    gym_wrapper.py    gymnasium.Env subclass
+    flock_env.py       Pure-JAX reset / step functions
+    gym_wrapper.py     gymnasium.Env subclass
   video/
-    recorder.py       Full-obs & partial-obs video writer
-config/
-  data_recording.yaml Data recording defaults
-data_recording.py     CLI entry point
+    recorder.py        Full-obs & partial-obs video writer
+  policies.py          Steering policies
+
+modeling/              autoencoder + world model (PyTorch)
+  models/
+    flock_dit.py       FlockDiT: flow-matching DiT over latents
+    frozen_vae.py      Frozen autoencoder wrapper
+    vae_module.py      VAE training module
+  data/                streaming + cached datasets, action pooling
+  training/
+    flow_trainer.py    Flow-matching training loop
+  eval/
+    boid_detect.py     Dart detector (centroid, hue, heading)
+    pair_consistency.py  Cross-view consistency metrics
+    heading_consistency.py  GT-free identity via headings
+    attention_probe.py   Cross-view attention interpretability
+    overlay.py         Overlays and view tiling
+  flow_matching.py     Objective + autoregressive rollout
+
+config/                one YAML per experiment slot
+jobs/                  SLURM job scripts per campaign
+docs/                  CONFIG.md, experiment logs
+scripts/               render benchmark
+
+data_recording.py      record simulation videos
+train_vae.py           train the video autoencoder
+train_flock_dit.py     train the world model
+precompute_latents.py  cache latents for non-streaming training
+eval_flock_dit.py      single-agent rollout evaluation
+eval_flock_multi.py    multi-agent cross-view evaluation
+compare_experiments.py cross-experiment comparison table
+probe_*.py             action-conditioning diagnostics
+analyze_*.py           attention analyses
+gen_*.py               figure and rollout-video generation
 ```
-
-## World-model training (Solaris baseline)
-
-The `modeling/` package is an adaptation of the Solaris multi-agent video
-world-model (Wan-2.1-style flow-matching diffusion in JAX/Flax-nnx) to the
-FlockWorld data format. By default it trains the single-player variant on one
-chosen agent's 64×64 partial view, conditioning on that agent's steering
-acceleration.
-
-Dataset layout the trainer expects (already produced by `data_recording.py`):
-
-```
-data/recording/<timestamp>/
-  metadata.json
-  video_a1/00000.mp4    # one chosen agent's partial view per episode
-  trajectory/00000.parquet   # contains a{k}_acc_x/a{k}_acc_y columns
-```
-
-Smoke-test one training step on CPU:
-
-```bash
-uv sync
-JAX_PLATFORMS=cpu uv run python train_world_model.py \
-  device.batch_size=1 \
-  num_frames_context=9 \
-  runner.params.total_steps=1 \
-  device.num_workers=0
-```
-
-On a GPU host you can drop `JAX_PLATFORMS=cpu` and raise the batch/steps
-counts. Common overrides:
-
-```bash
-# Train for 10k steps on GPU
-uv run python train_world_model.py runner.params.total_steps=10000
-
-# Use a different agent's view
-uv run python train_world_model.py dataset.additional_params.agent_index=5
-
-# Point at a different recording timestamp
-uv run python train_world_model.py dataset.train_dataset_name=20260520_090911
-```
-
-### Pretrained Wan VAE / CLIP weights
-
-The Solaris architecture uses a frozen Wan-2.1 VAE and the WanX image-CLIP
-encoder. If `pretrained/vae.pt` and `pretrained/clip.pt` (Orbax checkpoints)
-exist they are restored; otherwise both modules are initialised randomly with
-a warning and the run becomes a structural smoke test. To exercise the real
-baseline, drop the converted Wan 2.1 checkpoints into `pretrained/` before
-training.
 
 ## Extensibility
 
@@ -179,3 +463,28 @@ The codebase is structured to support future additions:
 - **State-based behavior** — swap the policy function passed to `step`
 - **Agent types** — add a `type_id` array to `BoidState`; dispatch rendering colour and policy per type
 - **Reward modeling** — replace the `reward = 0.0` placeholder with predator-prey or other reward functions
+
+## Limitations
+
+A single, deliberately simple synthetic environment: two-dimensional,
+deterministic given the seed, scripted dynamics, trivial visuals. Conclusions
+about which mechanisms aid cross-view consistency may not transfer to visually
+rich, three-dimensional, or stochastic environments. The scale is small — 27.5M
+parameters, 48 GPU-hours, one run per configuration, no variance across seeds —
+so small differences should be read cautiously. Evaluation replays recorded
+actions rather than exercising interactive or counterfactual control. All
+metrics pass through the hue-based detector, so even the ceiling sits below
+perfect, and the cross-view tier requires the agent-color cue. Everything is
+bounded by the frozen autoencoder: no model in this latent space can exceed its
+reconstruction ceiling.
+
+## Legacy paths
+
+`train_world_model.py` and `modeling/train.py` are the earlier Solaris-style
+training entry point, superseded by `train_flock_dit.py`. They are kept for
+reference and are not maintained; the default config path they expect no longer
+exists.
+
+## Citation
+
+Citation information will be added when the paper is available.

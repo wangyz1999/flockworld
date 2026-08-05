@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the accompanying paper."
+title: "FlockWorld: A Multi-Agent World Model of an Egocentric Flocking Simulation"
+abstract: >-
+  A multi-agent world model of an egocentric flocking simulation: a
+  flow-matching transformer that predicts, in the latent space of a small causal
+  video autoencoder, the futures of ten agent-centered views of a shared arena,
+  conditioned on the agents' accelerations. Includes the simulation environment,
+  the model, and a metric suite separating per-view fidelity from
+  ground-truth-free cross-view consistency.
+authors:
+  - name: "Authors to be listed on publication"
+repository-code: "https://github.com/wangyz1999/flockworld"
