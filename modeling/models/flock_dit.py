@@ -4,8 +4,9 @@ A faithful PyTorch reduction of the Solaris single-/multi-player world model
 (JAX/Flax-nnx, ``solaris/src/models/{singleplayer,multiplayer}/world_model.py``),
 adapted for boids:
 
-* operates in **pixel space** (no VAE) but is channel/patch/resolution agnostic
-  so swapping to VAE latents later is a config-only change;
+* operates in the **latent space** of a frozen video VAE (see ``frozen_vae.py``);
+  channel/patch/resolution agnostic, so pixel space is still a config-only change
+  and the earliest experiments ran that way;
 * **no CLIP** -- the I2V cross-attention is removed;
 * conditioned on **2D steering acceleration** ``(acc_x, acc_y)`` injected via
   adaLN modulation (replacing Solaris's mouse/keyboard action module);

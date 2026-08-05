@@ -125,8 +125,8 @@ within a 25-pixel vision radius (weighted 1.1, 1.0, and 1.5). The net steering
 force is clamped to 0.2 per step, speeds to [1, 4] pixels per step with a small
 drag. **Walls reflect**: a boid reaching the boundary is clamped inside and the
 offending velocity component negated, so flocks bounce rather than wrap. Each
-boid renders as a 10-pixel dart — the original five-point JS/PixiJS shape — and
-a 2-pixel white border marks the arena edge.
+boid renders as a 10-pixel oriented, notched triangle — the original five-point
+JS/PixiJS shape — and a 2-pixel white border marks the arena edge.
 
 One simulation step is one video frame at 30 fps. Episodes are seeded
 deterministically and the first 60 warm-up steps are discarded, so recordings
@@ -159,7 +159,7 @@ mean of the four video frames it spans.
 
 ### Visual conditions
 
-In the bare environment every boid is an identical white dart on a uniform
+In the bare environment every boid is identical and white on a uniform
 background, so crops are anonymous and nearly translation-invariant. Three
 conditions add identity and position cues:
 
@@ -352,12 +352,13 @@ under [docs/experiment_log/](docs/experiment_log/).
 
 ## Evaluation and metrics
 
-All metrics run on rendered pixels through a dart detector: frames are
+All metrics run on rendered pixels through a boid detector: frames are
 thresholded on brightness, connected components become detections with
 sub-pixel centroids, and each detection's mean hue either identifies it as a
-specific camera agent or marks it as an anonymous white boid. Blobs matching
-the arena border are rejected, and detections at the crop center are excluded
-from cross-view metrics since they belong to the view's own focal agent.
+specific camera agent or marks it as an anonymous white boid. Detections
+matching the arena border geometry are rejected, and detections at the crop
+center are excluded from cross-view metrics since they belong to the view's own
+focal agent.
 
 **Tier A — per-view fidelity (vs. ground truth).** Ground-truth positions are
 projected into each crop and matched to detections by nearest neighbor within 6
@@ -368,7 +369,7 @@ legitimately decay for a model that diverges from the reference while remaining
 internally coherent — they measure fidelity, not consistency.
 
 **Tier B — cross-view consistency (ground-truth-free).** The ten views check
-each other, never touching simulator state. When agent *b*'s dart is detected in
+each other, never touching simulator state. When agent *b* is detected in
 agent *a*'s view at offset `d_ab` from center, *a* has claimed "*b* is at offset
 `d_ab` from me". Since crops are agent-centered at 1:1 scale, consistent views
 must make mirrored claims, `d_ba ≈ -d_ab`. From this:
@@ -376,8 +377,8 @@ must make mirrored claims, `d_ba ≈ -d_ab`. From this:
 - **reciprocity** — fraction of sightings that are mutual
 - **displacement error** — `||d_ab + d_ba||` on reciprocal frames; zero iff the views agree on the offset
 - **motion error** — frame-to-frame disagreement of that offset, isolating agreement on relative motion
-- **white correspondence** — fraction of anonymous white darts one view places in the shared region that the other corroborates
-- **white count error** — disagreement in white-dart counts in the overlap
+- **white correspondence** — fraction of anonymous white boids one view places in the shared region that the other corroborates
+- **white count error** — disagreement in white-boid counts in the overlap
 - **pixel consistency** — PSNR and SSIM between the two crops warped onto their overlap
 
 Rates are self-triggered — a model that renders few other agents makes few, easy
@@ -389,7 +390,7 @@ The *floor* rolls out each of the ten views with an independent single-agent
 model — the "why not just run ten single-agent models?" bar.
 
 For the no-color condition, `modeling/eval/heading_consistency.py` provides the
-same identity-and-consistency analysis using dart *headings* instead of hues.
+same identity-and-consistency analysis using *headings* instead of hues.
 
 ## Render benchmark
 
@@ -430,7 +431,7 @@ modeling/              autoencoder + world model (PyTorch)
   training/
     flow_trainer.py    Flow-matching training loop
   eval/
-    boid_detect.py     Dart detector (centroid, hue, heading)
+    boid_detect.py     Boid detector (centroid, hue, heading)
     pair_consistency.py  Cross-view consistency metrics
     heading_consistency.py  GT-free identity via headings
     attention_probe.py   Cross-view attention interpretability
@@ -458,9 +459,9 @@ gen_*.py               figure and rollout-video generation
 
 The codebase is structured to support future additions:
 
-- **Per-agent parameters** — `BoidState` can carry a `params` array for individual behavior weights
+- **Per-boid parameters** — `BoidState` can carry a `params` array for individual behavior weights
 - **State-based behavior** — swap the policy function passed to `step`
-- **Agent types** — add a `type_id` array to `BoidState`; dispatch rendering colour and policy per type
+- **Boid types** — add a `type_id` array to `BoidState`; dispatch rendering colour and policy per type
 - **Reward modeling** — replace the `reward = 0.0` placeholder with predator-prey or other reward functions
 
 ## Limitations
@@ -498,7 +499,7 @@ reproduces that algorithm — a single vision radius for neighbor detection,
 alignment with a velocity-dot-product bias, Reynolds-style steering (desired
 minus current velocity, clamped by `max_force`) for all three rules, velocity
 drag, random heading noise, and min/max speed clamping, with no artificial
-turn-rate limiter. The dart shape is the original's five-point PixiJS geometry
+turn-rate limiter. The boid shape is the original's five-point PixiJS geometry
 (`sd_js_boid_batch` in `flockworld/rendering/primitives.py`, with the HSV helper
 in `flockworld/rendering/renderer.py`); `agent_size: 10` matches the original
 source points and `num_agents: 100` is the reference default.
