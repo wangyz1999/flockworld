@@ -132,6 +132,10 @@ One simulation step is one video frame at 30 fps. Episodes are seeded
 deterministically and the first 60 warm-up steps are discarded, so recordings
 start from settled flocking behavior and are exactly reproducible.
 
+The simulation is a JAX reimplementation of
+[cubedhuang/boids](https://github.com/cubeDhuang/boids) — see
+[Acknowledgments](#acknowledgments).
+
 ### Egocentric views
 
 The first ten boids are designated **camera agents**. Each observes a 128x128
@@ -387,11 +391,6 @@ model — the "why not just run ten single-agent models?" bar.
 For the no-color condition, `modeling/eval/heading_consistency.py` provides the
 same identity-and-consistency analysis using dart *headings* instead of hues.
 
-## Results
-
-Interim numbers and per-experiment notes live in
-[docs/experiment_log/](docs/experiment_log/).
-
 ## Render benchmark
 
 Compare CPU and GPU rendering throughput across agent counts:
@@ -484,6 +483,73 @@ reconstruction ceiling.
 training entry point, superseded by `train_flock_dit.py`. They are kept for
 reference and are not maintained; the default config path they expect no longer
 exists.
+
+## Acknowledgments
+
+This project builds on four pieces of prior work. Each section below states
+exactly what was adapted and where it lives in this repository.
+
+### Flocking simulation — [cubedhuang/boids](https://github.com/cubeDhuang/boids)
+
+The simulation is a JAX reimplementation of Daniel Huang's interactive 2D
+flocking simulation ([live demo](https://boids.dan.onl)), which itself
+implements Reynolds' steering rules. `flockworld/core/boids.py` faithfully
+reproduces that algorithm — a single vision radius for neighbor detection,
+alignment with a velocity-dot-product bias, Reynolds-style steering (desired
+minus current velocity, clamped by `max_force`) for all three rules, velocity
+drag, random heading noise, and min/max speed clamping, with no artificial
+turn-rate limiter. The dart shape is the original's five-point PixiJS geometry
+(`sd_js_boid_batch` in `flockworld/rendering/primitives.py`, with the HSV helper
+in `flockworld/rendering/renderer.py`); `agent_size: 10` matches the original
+source points and `num_agents: 100` is the reference default.
+
+One deliberate deviation: our arena **reflects** at the walls, while the
+reference wraps positions at the canvas edge.
+
+> MIT License · Copyright (c) 2023 Daniel Huang
+
+### World model architecture — [Solaris](https://github.com/solaris-wm/solaris)
+
+`modeling/models/flock_dit.py` is a PyTorch reduction of the Solaris
+single-/multi-player world model (originally JAX/Flax-nnx, from NYU VisionX).
+Carried over faithfully: the factorized 3D RoPE split, the adaLN-zero DiT block
+with its six modulation parameters and `1/sqrt(dim)` initialization, the
+sinusoidal timestep embedding, block-causal attention with per-frame block size
+`P*S`, the patchify/unpatchify Conv3d scheme, and per-frame token interleaving
+across agents. `modeling/flow_matching.py` follows Solaris's flow-matching
+objective and its `[0, 1000]` timestep range.
+
+Changed for this setting: no CLIP or image-to-video cross-attention, and the
+action is a 2D steering acceleration injected through adaLN in place of the
+mouse/keyboard action module.
+
+> Apache License 2.0
+
+### Multi-agent conditioning — [MIRA](https://mira-wm.com)
+
+Three mechanisms are adapted from MIRA, each behind a config flag whose default
+reproduces our non-MIRA baseline:
+
+| MIRA mechanism | Flag |
+|---|---|
+| Tiled multiplayer views and broadcast action conditioning (Sec. 4.5) | `model.tiled_rope`, `model.broadcast_actions` |
+| Per-frame noise level, i.i.d. over time and shared across views (Sec. 4.3) | `train.diffusion_forcing`, `train.shared_timesteps` |
+| Two-stage warm-start recipe (Sec. 6.6) | `train.warm_start` |
+
+The action-combination scheme — a learned per-agent tag added to each encoded
+action before pooling — also follows MIRA.
+
+> Apache License 2.0
+
+### Video autoencoder — [Wan 2.2](https://github.com/Wan-Video/Wan2.2)
+
+`modeling/models/wan_vae.py` is the Wan causal 3D video VAE implementation,
+vendored with its copyright header intact. We train it from scratch on this
+environment rather than using released weights, at a much smaller
+configuration (8 latent channels, 16x spatial and 4x temporal compression).
+
+> Apache License 2.0 · Copyright 2024-2025 The Alibaba Wan Team Authors ·
+> [arXiv:2503.20314](https://arxiv.org/abs/2503.20314)
 
 ## Citation
 
