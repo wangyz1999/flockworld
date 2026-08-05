@@ -67,11 +67,23 @@ def draw_detections(frames_thwc, dets_per_frame, size=gp.PARTIAL_SIZE, radius=4,
     return out
 
 
-def tile(views, pad=2, bg=40) -> np.ndarray:
-    """List of ``(T, H, W, 3)`` uint8 (same shape) -> one ``(T, gridH, gridW, 3)`` grid."""
+def tile(views, pad=2, bg=255, cols=None) -> np.ndarray:
+    """List of ``(T, H, W, 3)`` uint8 (same shape) -> one ``(T, gridH, gridW, 3)`` grid.
+
+    ``pad`` is the gutter width in output pixels, filled with ``bg`` on all four sides of
+    every tile -- so it doubles as each tile's border and as the grid's outer frame. The
+    default is a thin white gutter: the views are near-black, so a white gutter is a 0->255
+    step at every tile edge, which is what keeps the tiling legible once the grid is shrunk
+    to figure size. Don't add a dark 1px rule inside that edge -- it is invisible against
+    black content and only softens the gutter to 0->40->255.
+
+    ``cols`` overrides the default near-square packing. That packing leaves a hole for any
+    ``n`` that isn't a perfect rectangle (n=10 -> 4x3 with two dead cells); pass ``cols=5``
+    for a clean 5x2.
+    """
     n = len(views)
     T, H, W, _ = views[0].shape
-    cols = int(np.ceil(np.sqrt(n)))
+    cols = int(cols) if cols else int(np.ceil(np.sqrt(n)))
     rows = int(np.ceil(n / cols))
     gh, gw = rows * H + (rows + 1) * pad, cols * W + (cols + 1) * pad
     grid = np.full((T, gh, gw, 3), bg, np.uint8)
