@@ -51,6 +51,46 @@ def _blob_hue(f: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
     return hues
 
 
+def _blob_heading(V: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
+    """Dart heading (radians, ``atan2(row_dir, col_dir)``) per blob, NaN if degenerate.
+
+    The dart (``sd_js_boid_batch``: nose at local +x, notched tail spanning -x)
+    is elongated along its heading axis, so a V-weighted PCA recovers that axis
+    -- but only up to a +-pi ambiguity (an axis has no direction). Resolved via
+    the 3rd standardized moment (skewness) along the axis, which reflects the
+    shape's tail-vs-nose mass asymmetry; ``nose = sign(skew) * axis`` is
+    invariant to the arbitrary sign ``eigh`` returns for the axis (skew flips
+    sign with the axis too). Sign validated empirically against GT headings on
+    real recorded (VAE round-tripped) frames -- ``validate_heading_detect.py``
+    -- median angular error 1.2 deg, 94% within 15 deg, 3.4% land as
+    near-total (>90 deg) nose/tail flips on degenerate/tiny blobs.
+    """
+    heading = np.full(len(ids), np.nan, dtype=np.float32)
+    for i, lid in enumerate(ids):
+        rr, cc = np.nonzero(lbl == lid)
+        if len(rr) < 3:
+            continue
+        w = V[rr, cc].astype(np.float64)
+        wsum = w.sum()
+        if wsum <= 0:
+            continue
+        cy = float((rr * w).sum() / wsum)
+        cx = float((cc * w).sum() / wsum)
+        dy, dx = rr - cy, cc - cx
+        cov = np.array([[np.sum(w * dy * dy), np.sum(w * dy * dx)],
+                         [np.sum(w * dy * dx), np.sum(w * dx * dx)]]) / wsum
+        evals, evecs = np.linalg.eigh(cov)
+        axis = evecs[:, np.argmax(evals)]              # (ay, ax) unit vector, +-pi ambiguous
+        t = dy * axis[0] + dx * axis[1]
+        std = np.sqrt(np.sum(w * t * t) / wsum)
+        if std < 1e-6:
+            continue
+        skew = float(np.sum(w * t ** 3) / wsum / std ** 3)
+        nose = np.sign(skew) * axis if skew != 0 else axis
+        heading[i] = np.arctan2(nose[0], nose[1])
+    return heading
+
+
 def _estimate_background(f: np.ndarray, size: int) -> np.ndarray:
     """Per-channel greyscale opening: erosion then dilation with a ``size``x``size``
     square structuring element. Erosion replaces every pixel with the min over its
@@ -93,7 +133,10 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
     Returns dict:
         ``centroids`` ``(N, 2)`` as ``(u=col, v=row)`` (V-weighted),
         ``sizes`` ``(N,)`` pixel counts,
-        ``hue`` ``(N,)`` in [0,1) (NaN for white darts).
+        ``hue`` ``(N,)`` in [0,1) (NaN for white darts),
+        ``heading`` ``(N,)`` radians, ``atan2(row_dir, col_dir)`` convention
+            (matches ``load_gt_headings``); NaN if the blob is too small/round
+            to fit a stable axis.
     """
     f = _to_float01(frame_rgb)
     if background_size is not None:
@@ -105,7 +148,7 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
     lbl, n = ndimage.label(V > v_thresh)
     if n == 0:
         z = np.zeros((0,), np.float32)
-        return {"centroids": np.zeros((0, 2), np.float32), "sizes": z, "hue": z}
+        return {"centroids": np.zeros((0, 2), np.float32), "sizes": z, "hue": z, "heading": z}
     ids = np.arange(1, n + 1)
     sizes = np.asarray(ndimage.sum(np.ones_like(lbl, np.float32), lbl, ids))
     objs = ndimage.find_objects(lbl)              # per-label bbox slices (label i -> objs[i-1])
@@ -122,6 +165,7 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
     ids, sizes, coms = ids[keep], sizes[keep], coms[keep]
     if len(ids) == 0:
         z = np.zeros((0,), np.float32)
-        return {"centroids": np.zeros((0, 2), np.float32), "sizes": z, "hue": z}
+        return {"centroids": np.zeros((0, 2), np.float32), "sizes": z, "hue": z, "heading": z}
     centroids = np.stack([coms[:, 1], coms[:, 0]], axis=-1).astype(np.float32)  # (u, v)
-    return {"centroids": centroids, "sizes": sizes.astype(np.float32), "hue": _blob_hue(f, lbl, ids)}
+    return {"centroids": centroids, "sizes": sizes.astype(np.float32),
+            "hue": _blob_hue(f, lbl, ids), "heading": _blob_heading(V, lbl, ids)}
