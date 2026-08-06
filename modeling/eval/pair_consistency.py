@@ -2,11 +2,11 @@
 
 Replaces the old Tier B (removed): NOTHING here touches ``gt_pos`` -- not the
 scoring coordinate frame, not event selection. The two camera agents localize
-**each other**. In the ``agent_id`` setup, camera agent ``k`` renders as a dart
-of hue ``k / n_cam`` (flock_env), so in agent a's egocentric view agent b shows
-up as a b-hued dart whose pixel gives b's world offset from a -- with zero ground
+**each other**. In the ``agent_id`` setup, camera agent ``k`` renders with hue
+``k / n_cam`` (flock_env), so in agent a's egocentric view agent b shows
+up b-hued, and that pixel gives b's world offset from a -- with zero ground
 truth. Covisibility is whatever the model renders: "A sees B" == A drew a B-hued
-dart. So this measures the model's INTERNAL coherence and is deliberately blind
+boid. So this measures the model's INTERNAL coherence and is deliberately blind
 to whether it rendered the sightings reality demanded (that is fidelity, Tier A).
 
 Because it is self-triggered, an agreement RATE is meaningless on its own -- a
@@ -15,10 +15,11 @@ VOLUME (``n_sightings``, ``sightings_per_frame``, ``n_reciprocal``); read the
 rates against those. A sparse model that renders nothing must not win.
 
 Geometry (gt_project): an agent-centered ``size`` px crop, 1:1 scale, no
-rotation, so a dart at pixel ``p`` implies world offset ``p - HALF`` from that
-agent. Identity inversion: ``round(hue * n_cam) % n_cam`` recovers the boid index
-(hue == index / n_cam at generation), with a half-slot tolerance so a wrong-hue
-dart is rejected rather than misassigned (achromatic darts read as white = NaN).
+rotation, so a detection at pixel ``p`` implies world offset ``p - HALF`` from
+that agent. Identity inversion: ``round(hue * n_cam) % n_cam`` recovers the boid
+index (hue == index / n_cam at generation), with a half-slot tolerance so a
+wrong-hue detection is rejected rather than misassigned (achromatic boids read as
+white = NaN).
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from scipy.optimize import linear_sum_assignment
 from modeling.eval import gt_project as gp
 
 HALF = gp.PARTIAL_SIZE // 2
-FOCAL_EXCLUDE_PX = 8.0  # the view owner's own dart sits at crop center every frame; its
+FOCAL_EXCLUDE_PX = 8.0  # the view owner itself sits at crop center every frame; its
                         # hue-drift tail otherwise yields one-sided phantom sightings
 
 
@@ -38,10 +39,11 @@ def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
 
     Assign to the nearest palette slot but REJECT (-1) when the circular hue error
     exceeds ``tol / n_cam``. ``tol`` MUST be < 0.5 to reject anything: rounding already
-    puts every dart within half a slot of its nearest identity, so ``tol=0.5`` (the old
-    default) accepted everything -- forcing noisy off-center darts onto the wrong
-    neighbour and inflating sightings with false positives. ``tol~0.25`` drops darts
-    more than a quarter-slot from a palette hue (i.e. near an identity boundary).
+    puts every detection within half a slot of its nearest identity, so ``tol=0.5``
+    (the old default) accepted everything -- forcing noisy off-center detections onto
+    the wrong neighbour and inflating sightings with false positives. ``tol~0.25``
+    drops detections more than a quarter-slot from a palette hue (i.e. near an
+    identity boundary).
     """
     hue = np.asarray(hue, np.float32)
     ident = np.full(len(hue), -1, np.int64)
@@ -55,15 +57,15 @@ def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
 
 
 def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
-    """Pixel ``(u, v)`` of the dart identified as ``target`` in ``view``, or None.
+    """Pixel ``(u, v)`` of the detection identified as ``target`` in ``view``, or None.
 
     On multiple candidates picks the one whose hue is closest to the exact
     expected ``target / n_cam``. (No hue-error is returned: it would only ever
-    reflect darts already accepted as the right color, so it cannot measure
+    reflect detections already accepted as the right color, so it cannot measure
     identity stability -- a color flip shows up as a missed/mismatched sighting.)
 
-    Darts within ``FOCAL_EXCLUDE_PX`` of crop center are ignored: that is the
-    view owner's own dart, never a valid sighting of another agent (its hue-drift
+    Detections within ``FOCAL_EXCLUDE_PX`` of crop center are ignored: that is the
+    view owner itself, never a valid sighting of another agent (its hue-drift
     tail was ~30% of ceiling sightings, all one-sided phantoms).
     """
     cents = np.asarray(view["centroids"], np.float32)
@@ -83,7 +85,7 @@ def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
 
 
 def _whites(view: dict) -> np.ndarray:
-    """White (achromatic, NaN-hue) dart centroids (M,2) -- the third-party boids."""
+    """White (achromatic, NaN-hue) centroids (M,2) -- the third-party boids."""
     cents = np.asarray(view["centroids"], np.float32)
     if len(cents) == 0:
         return cents

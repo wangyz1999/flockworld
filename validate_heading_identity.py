@@ -2,7 +2,7 @@
 purely a validation step (mirrors validate_heading_detect.py), not part of the
 metric itself, which never touches GT. On real GT-rendered (VAE round-tripped)
 frames, camera agent index IS a known boid index, so for every accepted (a, b)
-pairing we can ask: does the dart we identified as "b" in a's view actually
+pairing we can ask: does the boid we identified as "b" in a's view actually
 imply agent b's true world position, frame by frame?
 
     uv run python validate_heading_identity.py

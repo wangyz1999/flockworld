@@ -18,9 +18,9 @@ what the frame shows.
 
 So we can READ the implied action off any frame, generated or real:
 
-  Stage 1 (calibrate on REAL frames). Decode the GT latents, detect darts, build the
+  Stage 1 (calibrate on REAL frames). Decode the GT latents, detect boids, build the
     rule's own equivariant features (unit cohesion / separation / alignment directions,
-    own-velocity direction from the centre dart's heading, and the raw vectors), and fit
+    own-velocity direction from the focal agent's heading, and the raw vectors), and fit
     them to the recorded action by least squares. Weights are shared across x and y --
     the rule is rotation-equivariant, so this is a 7-parameter fit, not 2x8 free params.
     Episode-held-out R^2 answers "how much of the commanded action is redundant given a
@@ -81,7 +81,7 @@ def frame_features(det) -> np.ndarray | None:
     rel = cents - HALF                                   # crop-centre offsets == world offsets
     dist = np.linalg.norm(rel, axis=1)
 
-    own = dist <= FOCAL_EXCLUDE_PX                       # the view owner's own dart
+    own = dist <= FOCAL_EXCLUDE_PX                       # the view owner itself
     v_own = np.zeros(2, np.float64)
     if own.any():
         h = head[own][np.argmin(dist[own])]

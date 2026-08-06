@@ -1,12 +1,12 @@
 """Why does diffusion-forcing have so few cross-view reciprocal sightings despite
 near-correct overall detection volume (Tier A)? Decompose every NON-SELF detection
-(the view owner's own dart, within FOCAL_EXCLUDE_PX of center, is dropped -- same
+(the view owner itself, within FOCAL_EXCLUDE_PX of center, is dropped -- same
 rule pair_consistency uses) into three buckets:
 
-  white       -- achromatic dart (hue=NaN), the ordinary background boids.
-  identified  -- colored dart whose hue lands within tolerance of some camera
+  white       -- achromatic (hue=NaN), the ordinary background boids.
+  identified  -- colored boid whose hue lands within tolerance of some camera
                  agent's k/n_cam slot (a genuine "I can see camera-agent k" signal).
-  ambiguous   -- colored dart that does NOT cleanly match any slot (rejected by
+  ambiguous   -- colored boid that does NOT cleanly match any slot (rejected by
                  pair_consistency._identify) -- neither a clean self/other id nor
                  a background boid; a wrong/blended/off-slot hue.
 

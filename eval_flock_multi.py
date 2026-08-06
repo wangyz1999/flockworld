@@ -86,7 +86,7 @@ def _decode_detect(lat, decode_fn, background_size=None):
     """lat (P, T, z, h, w) -> (frames[agent] (Tp,H,W,3) uint8, dets[agent][frame] dict).
 
     Decode each agent's latents ONCE; keep the pixel frames (for pixel_consistency)
-    and run the dart detector on them (centroids+hue for tier_a / pair_consistency).
+    and run the boid detector on them (centroids+hue for tier_a / pair_consistency).
     ``background_size``: gradient-background setups only -- see boid_detect.detect_boids.
     """
     frames_all, dets_all = [], []
@@ -247,7 +247,7 @@ def main():
     ap.add_argument("--eval-seed", type=int, default=0,
                     help="streaming only: base seed for the held-out eval episodes.")
     ap.add_argument("--background-size", type=int, default=None,
-                    help="dart-detector background-subtraction kernel, gradient-background "
+                    help="boid-detector background-subtraction kernel, gradient-background "
                          "setups only (see boid_detect.detect_boids). Auto-defaults to 31 when "
                          "the config's sim_overrides set rendering.background_gradient=true; "
                          "pass explicitly to override, or 0 to force it off.")

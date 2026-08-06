@@ -3,7 +3,7 @@
 Used by the qualitative multi-view eval: decode each agent's (predicted or GT)
 latents to pixels, draw a marker at every GT-projected boid position, and tile
 the P views into one grid video. The focal agent gets a red ring, others green,
-so you can eyeball whether the model rendered darts where GT says they should be
+so you can eyeball whether the model rendered boids where GT says they should be
 (and whether co-located agents agree).
 """
 
@@ -45,7 +45,7 @@ def draw_gt_marks(frames_thwc, positions, agent_world_idx, size=gp.PARTIAL_SIZE,
 
 
 def draw_detections(frames_thwc, dets_per_frame, size=gp.PARTIAL_SIZE, radius=4, color=(255, 255, 0)):
-    """Draw a ring at every DETECTED blob centroid (the detector's *own* output).
+    """Draw a ring at every DETECTED centroid (the detector's *own* output).
 
     Unlike ``draw_gt_marks`` (which draws GT-projected positions), this draws what
     ``boid_detect.detect_boids`` actually found in the frame — so you can eyeball

@@ -1,8 +1,8 @@
-"""Validate the new dart-heading extractor (boid_detect._blob_heading) against
+"""Validate the boid-heading extractor (boid_detect._boid_heading) against
 GT headings on real recorded (VAE round-tripped) frames -- NOT a model rollout,
 so this isolates the extractor's own noise from any model drift. Every detected
-blob is matched to its nearest GT-visible boid (mirrors diag_blob_shapes.py's
-matching); among matched blobs we compare extracted heading to that boid's true
+detection is matched to its nearest GT-visible boid (mirrors diag_boid_shapes.py's
+matching); among matched detections we compare extracted heading to that boid's true
 heading (gt_project.load_gt_headings).
 
     uv run python validate_heading_detect.py
@@ -27,8 +27,8 @@ ds = FlockingLatentMultiDataset(
     num_context_frames=cfg.data.num_context_frames, num_future_frames=cfg.data.num_future_frames,
     random_clip=False, num_agents=int(cfg.data.num_agents))
 
-errs = []       # angular error (deg), matched + headed blobs only
-n_blobs = n_matched = n_headed = 0
+errs = []       # angular error (deg), matched + headed detections only
+n_detections = n_matched = n_headed = 0
 with torch.no_grad():
     for e in range(min(NEP, len(ds.episodes))):
         ep = ds.full_episode(e)
@@ -42,7 +42,7 @@ with torch.no_grad():
                 gpx = np.asarray(gpx, np.float32).reshape(-1, 2)
                 det = detect_boids(frames[t])
                 cents, headings = det["centroids"], det["heading"]
-                n_blobs += len(cents)
+                n_detections += len(cents)
                 for (u, v), h in zip(cents, headings):
                     if len(gpx) == 0:
                         continue
@@ -60,7 +60,7 @@ with torch.no_grad():
         print(f"ep{ep['episode_id']}: matched {n_matched} headed {n_headed} (cumulative)", flush=True)
 
 errs = np.asarray(errs)
-print(f"\nn_blobs {n_blobs}  n_matched {n_matched}  n_headed(of matched) {n_headed} "
+print(f"\nn_detections {n_detections}  n_matched {n_matched}  n_headed(of matched) {n_headed} "
       f"({n_headed / max(n_matched, 1):.2%})")
 if len(errs):
     q = np.percentile(errs, [50, 75, 90, 99, 100])
@@ -68,4 +68,4 @@ if len(errs):
     print(f"frac <5deg: {(errs < 5).mean():.2%}   frac <15deg: {(errs < 15).mean():.2%}   "
           f"frac <30deg: {(errs < 30).mean():.2%}   frac >90deg (likely nose/tail flip): {(errs > 90).mean():.2%}")
 else:
-    print("no matched+headed blobs -- something upstream is broken")
+    print("no matched+headed detections -- something upstream is broken")

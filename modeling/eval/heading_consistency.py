@@ -1,18 +1,18 @@
 """GT-free cross-view identity + consistency for the no-color, no-bg-gradient
 setup (Setup 1).
 
-Without color there is no way to read "which dart is agent B" off a single
+Without color there is no way to read "which boid is agent B" off a single
 frame the way ``pair_consistency.py`` does via hue. Identity is instead
-INFERRED: every camera agent's own egocentric video already shows that agent's
-own dart, always within ``FOCAL_EXCLUDE_PX`` of crop center (same convention as
-``pair_consistency``), with a heading (``boid_detect._blob_heading``,
+INFERRED: every camera agent's own egocentric video already shows that agent
+itself, always within ``FOCAL_EXCLUDE_PX`` of crop center (same convention as
+``pair_consistency``), with a heading (``boid_detect._boid_heading``,
 validated to ~1 deg median error against GT on real frames -- see
 ``validate_heading_detect.py``). That is a GT-free, per-agent heading
 "fingerprint" over time, read straight from that agent's own rendered output.
 
-A candidate dart in agent A's view is hypothesized to be agent B if, over a
+A candidate boid in agent A's view is hypothesized to be agent B if, over a
 short bootstrap window, its heading trace tracks B's own fingerprint AND
-(independently, in B's own view) a candidate dart there tracks A's fingerprint,
+(independently, in B's own view) a candidate boid there tracks A's fingerprint,
 AND the two candidates' implied relative offsets are mutually reciprocal
 (``pair_consistency``'s ``d_ab + d_ba ~ 0`` check) over that same window. All
 three holding at once, for several consecutive frames, is the accept
@@ -50,7 +50,7 @@ from scipy.optimize import linear_sum_assignment
 from modeling.eval import gt_project as gp
 
 HALF = gp.PARTIAL_SIZE // 2
-FOCAL_EXCLUDE_PX = 8.0   # matches pair_consistency: the viewer's own dart sits at crop center
+FOCAL_EXCLUDE_PX = 8.0   # matches pair_consistency: the viewer itself sits at crop center
 
 
 def _ang_diff(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -60,11 +60,11 @@ def _ang_diff(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def self_heading_trace(dets: list) -> np.ndarray:
-    """Per-frame heading (radians, NaN if absent) of the view owner's own dart.
+    """Per-frame heading (radians, NaN if absent) of the view owner itself.
 
-    The owner's dart sits within ``FOCAL_EXCLUDE_PX`` of crop center every
-    frame (egocentric crop, by construction) -- the one dart whose identity is
-    known for free: it's whoever owns this video, zero GT needed.
+    The owner sits within ``FOCAL_EXCLUDE_PX`` of crop center every
+    frame (egocentric crop, by construction) -- the one detection whose identity
+    is known for free: it's whoever owns this video, zero GT needed.
     """
     T = len(dets)
     head = np.full(T, np.nan, np.float32)
@@ -79,7 +79,7 @@ def self_heading_trace(dets: list) -> np.ndarray:
     return head
 
 
-def _other_darts(dets_t: dict):
+def _other_boids(dets_t: dict):
     """Non-focal (centroids, headings) in one frame -- candidate sightings of someone else."""
     cents = np.asarray(dets_t["centroids"], np.float32)
     if len(cents) == 0:
@@ -89,7 +89,7 @@ def _other_darts(dets_t: dict):
 
 
 def link_tracks(dets: list, max_step: float = 20.0, min_len: int = 1) -> list:
-    """Greedy nearest-position frame-to-frame linker over non-focal darts (GT-free).
+    """Greedy nearest-position frame-to-frame linker over non-focal boids (GT-free).
 
     No identity to link on, only proximity -- cheap, and breaks on ambiguity
     (crossing paths, occlusion) rather than mis-linking, which is fine here: a
@@ -101,7 +101,7 @@ def link_tracks(dets: list, max_step: float = 20.0, min_len: int = 1) -> list:
     tracks = []
     open_tracks = []   # each: {'t0', 'pos': [...], 'heading': [...]}; last pos == current position
     for t in range(len(dets)):
-        cents, heads = _other_darts(dets[t])
+        cents, heads = _other_boids(dets[t])
         prev_pos = (np.stack([tr["pos"][-1] for tr in open_tracks])
                     if open_tracks else np.zeros((0, 2), np.float32))
         matched_cur = {}
@@ -189,7 +189,7 @@ def heading_identity_consistency(dets: list, heading_thresh_deg: float = 30.0,
             discriminator between nearby boids; relative-geometry reciprocity
             is a much stronger, largely independent one). 4.0px took pair-level
             precision from 83% (8.0px) to 100% at only ~19% less volume.
-        max_step: max px/frame for the per-view tracker to keep linking a dart.
+        max_step: max px/frame for the per-view tracker to keep linking a boid.
         return_pairs: if True, also return the raw list of accepted pairing
             records (``{'a', 'b', 't0', 'g1', 'surv_end', 'ta', 'tb'}``) --
             for external validation (e.g. cross-checking against GT), not used

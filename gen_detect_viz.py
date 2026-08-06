@@ -1,6 +1,6 @@
 """Visualize the boid detector on GENERATED frames (run from repo root).
 
-Per agent: the model's GENERATED view with a green ring on every detected blob
+Per agent: the model's GENERATED view with a green ring on every detection
 (exactly what ``detect_boids`` found). One mp4 per agent, no GT half.
 
     uv run python gen_detect_viz.py

@@ -55,7 +55,7 @@ def _hsv_to_rgb(h, s, v):
     jax.jit,
     static_argnames=("height", "width", "patch_radius", "color_mode", "border_width"),
 )
-def _render_frame_js_dart(
+def _render_frame_js_boid(
     positions, velocities, agent_color, boid_colors, background_image,
     height: int, width: int,
     agent_size, max_speed, alpha, aa_blur,
@@ -64,7 +64,7 @@ def _render_frame_js_dart(
     border_width: int,
     border_color,
 ):
-    """Render the original JS PIXI dart with a batched patch rasterizer.
+    """Render the original JS PIXI boid shape with a batched patch rasterizer.
 
     The original scan-based implementation matched painter's-order alpha
     compositing exactly, but it forced one tiny scatter update per boid. This
@@ -102,7 +102,7 @@ def _render_frame_js_dart(
     pixel_pos = jnp.stack(
         [xs.astype(jnp.float32), ys.astype(jnp.float32)], axis=-1,
     )
-    # Use the rounded center (not float position) so the dart's visual centroid
+    # Use the rounded center (not float position) so the boid's visual centroid
     # is locked to its integer pixel — keeps the focal agent stable inside the
     # integer-aligned partial crop.
     rel = pixel_pos - centers.astype(jnp.float32)[:, None, :]
@@ -157,7 +157,7 @@ def render_frame(
 ):
     """Render a complete (H, W, 3) float32 frame."""
     image_h, image_w = uv_grid.shape[:2]
-    return _render_frame_js_dart(
+    return _render_frame_js_boid(
         positions, velocities, agent_color, boid_colors, background_image,
         image_h, image_w,
         agent_size, max_speed, boid_alpha, aa_blur,

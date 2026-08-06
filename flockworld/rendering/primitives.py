@@ -40,7 +40,7 @@ def sd_triangle_batch(p, p0, p1, p2):
 
 
 def sd_js_boid_batch(p, size):
-    """Signed distance for the JS dart shape in pixel units.
+    """Signed distance for the JS boid shape in pixel units.
 
     ``size=10`` matches the original source points; other values scale the
     shape uniformly.

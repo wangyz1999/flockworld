@@ -38,7 +38,7 @@ boids:
   max_speed: 4.0          # px/tick — boids never go faster than this
   drag: 0.005             # velocity damping per tick (fraction lost)
   noise: 0.0              # heading randomness (scaled by pi/80 rad)
-  agent_size: 10        # px — scales the JS dart; reflect boundary insets by half this
+  agent_size: 10        # px — scales the JS boid shape; reflect boundary insets by half this
 
 env:
   max_steps: 1000

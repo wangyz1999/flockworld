@@ -243,8 +243,8 @@ def main():
         torch.cuda.empty_cache()
 
     # ---- report -------------------------------------------------------------
-    for key, blob in results.items():
-        r = blob["conditions"]
+    for key, entry in results.items():
+        r = entry["conditions"]
         fl = r["gt_seed2"]
         print(f"\n########## {key} ##########")
         print("ACTION SENSITIVITY  (paired: every row shares gt's sampler noise except gt_seed2)")

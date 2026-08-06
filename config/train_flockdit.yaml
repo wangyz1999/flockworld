@@ -4,7 +4,7 @@ output_dir: output/flock_dit
 experiment_name: flock_dit_single
 
 data:
-  root: data/recording/20260622_152605
+  root: data/recording/20260623_135735   # 10k-episode set; the original 750-episode recording is gone
   val_fraction: 0.1
   num_context_frames: 4
   num_future_frames: 12          # 4 + 12 = 16-frame clips

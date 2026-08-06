@@ -1,11 +1,11 @@
-"""Follow-up to diagnose_identity.py: WHERE is diffusion-forcing's colored-dart
+"""Follow-up to diagnose_identity.py: WHERE is diffusion-forcing's colored-boid
 suppression concentrated?
 
-  (a) per-hue-slot: is the ~3x drop in colored (non-self) darts uniform across
+  (a) per-hue-slot: is the ~3x drop in colored (non-self) boids uniform across
       all 10 camera-agent identities, or concentrated in a few -- e.g. the same
       agents (2/5/9/10) whose hue was already shown to be VAE-unstable even in
       the pure ground-truth ceiling (no model involved)?
-  (b) per-distance-from-center: does suppression concentrate on darts far from
+  (b) per-distance-from-center: does suppression concentrate on boids far from
       the viewing agent (near the crop edge) vs close by?
 
 Usage:

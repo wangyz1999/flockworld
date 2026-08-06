@@ -1,4 +1,4 @@
-"""Check the gradient-background dart detector (boid_detect.detect_boids with
+"""Check the gradient-background boid detector (boid_detect.detect_boids with
 background_size set) on real sim frames and their VAE round-trip reconstruction.
 
 Renders a short episode directly from the sim with background_gradient=true

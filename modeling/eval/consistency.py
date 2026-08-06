@@ -1,11 +1,11 @@
 """Per-view fidelity (Tier A) + cross-view position-matching helpers.
 
-Tier A is GT-ANCHORED fidelity: match detected darts to GT-projected boids ->
+Tier A is GT-ANCHORED fidelity: match detections to GT-projected boids ->
 detection rate + position error. It legitimately drops for a divergent model
 (that is what a fidelity axis is for) and is kept separate from consistency.
 
 Cross-view CONSISTENCY used to live here as "Tier B", but it leaked GT through
-the camera: it placed each view's darts in world coordinates using ``gt_pos``,
+the camera: it placed each view's boids in world coordinates using ``gt_pos``,
 which conflated genuine cross-view disagreement with per-view camera drift. It
 has been removed in favour of the fully GT-free
 ``modeling.eval.pair_consistency`` -- in the colored-agent setup the camera

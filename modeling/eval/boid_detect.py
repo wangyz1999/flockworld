@@ -1,20 +1,21 @@
-"""Detect rendered boids (darts) in a decoded partial-view frame.
+"""Detect rendered boids in a decoded partial-view frame.
 
 Threshold on the **HSV Value channel (V = max RGB), not grayscale luminance** —
-a full-saturation colored dart can have low luminance (pure blue ~0.11) and be
-missed by a grayscale threshold, but V~1 for any bright dart, so V finds white
-*and* colored darts uniformly against the black background. Then connected
-components -> centroids. Also reads each blob's hue (identifies camera agents in
-the color setups; NaN for achromatic white darts). One detector for every setup.
+a full-saturation colored boid can have low luminance (pure blue ~0.11) and be
+missed by a grayscale threshold, but V~1 for any bright boid, so V finds white
+*and* colored boids uniformly against the black background. Then connected
+components -> centroids. Also reads each detection's hue (identifies camera
+agents in the color setups; NaN for achromatic white boids). One detector for
+every setup.
 
 Gradient setups: don't subtract the *expected* (commanded-camera-pose) gradient —
 the world model drifts from commanded GT, so an analytic subtraction would leave a
 residual wherever the model's rendered gradient disagrees with the geometrically
-"correct" one, and that residual would itself get mistaken for a dart. Instead
+"correct" one, and that residual would itself get mistaken for a boid. Instead
 estimate the background empirically, per frame, via greyscale morphological
-opening (``background_size``): darts are compact/high-frequency, the gradient is
+opening (``background_size``): boids are compact/high-frequency, the gradient is
 smooth/low-frequency by construction, so an opening with a kernel larger than any
-real dart but much smaller than the frame removes the darts and leaves whatever
+real boid but much smaller than the frame removes the boids and leaves whatever
 gradient the model actually painted — correct or not, no GT camera geometry
 needed. Subtracting that estimate flattens the background back to ~black before
 thresholding as usual.
@@ -31,8 +32,8 @@ def _to_float01(frame) -> np.ndarray:
     return f / 255.0 if f.max() > 1.5 else f
 
 
-def _blob_hue(f: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
-    """Mean-RGB hue per blob in [0,1); NaN if the blob is achromatic (white)."""
+def _boid_hue(f: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
+    """Mean-RGB hue per detection in [0,1); NaN if it is achromatic (white)."""
     R, G, B = f[..., 0], f[..., 1], f[..., 2]
     hues = np.full(len(ids), np.nan, dtype=np.float32)
     for i, lid in enumerate(ids):
@@ -51,10 +52,11 @@ def _blob_hue(f: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
     return hues
 
 
-def _blob_heading(V: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
-    """Dart heading (radians, ``atan2(row_dir, col_dir)``) per blob, NaN if degenerate.
+def _boid_heading(V: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray:
+    """Boid heading (radians, ``atan2(row_dir, col_dir)``) per detection, NaN if degenerate.
 
-    The dart (``sd_js_boid_batch``: nose at local +x, notched tail spanning -x)
+    The rendered boid (``sd_js_boid_batch``: nose at local +x, notched tail
+    spanning -x)
     is elongated along its heading axis, so a V-weighted PCA recovers that axis
     -- but only up to a +-pi ambiguity (an axis has no direction). Resolved via
     the 3rd standardized moment (skewness) along the axis, which reflects the
@@ -63,7 +65,7 @@ def _blob_heading(V: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray
     sign with the axis too). Sign validated empirically against GT headings on
     real recorded (VAE round-tripped) frames -- ``validate_heading_detect.py``
     -- median angular error 1.2 deg, 94% within 15 deg, 3.4% land as
-    near-total (>90 deg) nose/tail flips on degenerate/tiny blobs.
+    near-total (>90 deg) nose/tail flips on degenerate/tiny detections.
     """
     heading = np.full(len(ids), np.nan, dtype=np.float32)
     for i, lid in enumerate(ids):
@@ -94,11 +96,11 @@ def _blob_heading(V: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray
 def _estimate_background(f: np.ndarray, size: int) -> np.ndarray:
     """Per-channel greyscale opening: erosion then dilation with a ``size``x``size``
     square structuring element. Erosion replaces every pixel with the min over its
-    neighborhood -- big enough to swallow a compact dart entirely, so the result at
-    a dart's location falls back to the surrounding (background) value; dilation
+    neighborhood -- big enough to swallow a compact boid entirely, so the result at
+    a boid's location falls back to the surrounding (background) value; dilation
     (max over the same neighborhood) then restores the smooth background level
     everywhere, undoing erosion's shrink of the true background regions. Net
-    effect: darts erased, smooth low-frequency background (whatever the model
+    effect: boids erased, smooth low-frequency background (whatever the model
     actually painted) preserved.
     """
     return ndimage.grey_opening(f, size=(size, size, 1))
@@ -108,18 +110,18 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
                  max_elong: float = 5.0, max_extent: int = 40,
                  border_px: int = 5, border_min_size: int = 25,
                  background_size: int | None = None) -> dict:
-    """Find darts in one RGB frame.
+    """Find boids in one RGB frame.
 
-    Boids render as compact blobs (bbox elongation ~1.4, extent ~13px, size ~64);
+    Boids render as compact detections (bbox elongation ~1.4, extent ~13px, size ~64);
     the white world border renders as a thin straight LINE (elongation up to ~128),
     an L-shaped corner (huge extent), or -- where it just clips the crop -- a small
     compact fragment hugging the frame edge (size ~11). After thresholding +
-    connected components we reject blobs that are:
+    connected components we reject detections that are:
       * too elongated (``> max_elong``)      -> border lines,
       * too large     (``> max_extent``)     -> corners,
       * small AND on the frame border        -> border-clip fragments,
-    all outside the real-dart range measured on GT frames (elong p99 2.6; extent
-    p99 25; darts median size 64). Merged darts stay compact and interior, so they
+    all outside the real-boid range measured on GT frames (elong p99 2.6; extent
+    p99 25; boids median size 64). Merged boids stay compact and interior, so they
     survive; a half-clipped real boid at the edge is size >~30 so it also survives.
 
     Args:
@@ -133,10 +135,10 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
     Returns dict:
         ``centroids`` ``(N, 2)`` as ``(u=col, v=row)`` (V-weighted),
         ``sizes`` ``(N,)`` pixel counts,
-        ``hue`` ``(N,)`` in [0,1) (NaN for white darts),
+        ``hue`` ``(N,)`` in [0,1) (NaN for white boids),
         ``heading`` ``(N,)`` radians, ``atan2(row_dir, col_dir)`` convention
-            (matches ``load_gt_headings``); NaN if the blob is too small/round
-            to fit a stable axis.
+            (matches ``load_gt_headings``); NaN if the detection is too
+            small/round to fit a stable axis.
     """
     f = _to_float01(frame_rgb)
     if background_size is not None:
@@ -168,4 +170,4 @@ def detect_boids(frame_rgb, v_thresh: float = 0.25, min_size: int = 2,
         return {"centroids": np.zeros((0, 2), np.float32), "sizes": z, "hue": z, "heading": z}
     centroids = np.stack([coms[:, 1], coms[:, 0]], axis=-1).astype(np.float32)  # (u, v)
     return {"centroids": centroids, "sizes": sizes.astype(np.float32),
-            "hue": _blob_hue(f, lbl, ids), "heading": _blob_heading(V, lbl, ids)}
+            "hue": _boid_hue(f, lbl, ids), "heading": _boid_heading(V, lbl, ids)}

@@ -82,7 +82,7 @@ stats such as `total_count`.
 | `boids.max_speed` | `4.0` | Maximum boid speed in pixels per tick. |
 | `boids.drag` | `0.005` | Per-tick velocity damping fraction. |
 | `boids.noise` | `0.0` | Random heading perturbation scale. The angle range is `(pi / 80) * noise`. |
-| `boids.agent_size` | `10.0` | JS dart size in pixels. `10.0` matches the original source points; other values scale it uniformly. Reflect boundaries keep centers inset by half this value so bodies stay visible at the canvas edge. |
+| `boids.agent_size` | `10.0` | JS boid size in pixels. `10.0` matches the original source points; other values scale it uniformly. Reflect boundaries keep centers inset by half this value so bodies stay visible at the canvas edge. |
 
 ## `env`
 
@@ -103,8 +103,8 @@ Color values are normalized RGB triples in `[0.0, 1.0]`.
 | `rendering.background_color` | `[0.0862745, 0.0862745, 0.0862745]` | Frame background color. The default is JS `0x161616`. |
 | `rendering.agent_color` | `[1.0, 1.0, 1.0]` | Fixed boid color used when `rendering.color_mode=fixed`. |
 | `rendering.aa_blur` | `1.0` | Anti-aliasing transition width in pixels. |
-| `rendering.boid_alpha` | `0.8` | Alpha used when compositing JS dart boids over the background. |
-| `rendering.color_mode` | `"speed"` | JS dart color mode. Use `"speed"` for JS HSV speed tinting, or `"fixed"` to render every boid with `rendering.agent_color`. |
+| `rendering.boid_alpha` | `0.8` | Alpha used when compositing boids over the background. |
+| `rendering.color_mode` | `"speed"` | Boid color mode. Use `"speed"` for JS HSV speed tinting, or `"fixed"` to render every boid with `rendering.agent_color`. |
 
 Examples:
 
