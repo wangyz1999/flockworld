@@ -1,0 +1,136 @@
+{
+  "experiment": "agents02",
+  "config": "config/train_flockdit_latent_multi_stream.yaml",
+  "overrides": [
+    "vae.checkpoint_path=/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt",
+    "data.num_agents=2",
+    "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=false,collection.partial_agents=2]",
+    "output_dir=/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents02-10826537_0"
+  ],
+  "output_dir": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents02-10826537_0",
+  "streaming": true,
+  "num_agents": 2,
+  "background_size": null,
+  "eval_args": {
+    "episodes": 3,
+    "seconds": 6.0,
+    "sim_fps": 30,
+    "steps": 25,
+    "eval_seed": 0,
+    "baseline": "single"
+  },
+  "model_checkpoint": {
+    "path": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents02-10826537_0/checkpoints/epoch_0336.pt",
+    "val_loss": 0.2900208057835698
+  },
+  "baseline_config": "config/train_flockdit_latent_single_stream.yaml",
+  "baseline_output_dir": "/project2/ustun_1726/flowckworld/output/flock_dit_single_stream_floor",
+  "baseline_checkpoint": {
+    "path": "/project2/ustun_1726/flowckworld/output/flock_dit_single_stream_floor/checkpoints/epoch_0252.pt",
+    "val_loss": 0.3094778014346957
+  },
+  "n_ep": 3,
+  "columns": {
+    "ceiling": {
+      "tier_a": {
+        "detection_rate": 0.9697310243665483,
+        "position_error": 1.5024465466324701,
+        "mean_detected_per_frame": 6.084745762711864,
+        "mean_gt_visible_per_frame": 6.199623352165726
+      },
+      "consistency": {
+        "reciprocity_rate": 0.0,
+        "displacement_error": NaN,
+        "motion_error": NaN,
+        "white_correspondence": 0.0,
+        "white_count_error": NaN,
+        "sightings_per_frame": 0.0
+      },
+      "pixel": {
+        "psnr": NaN,
+        "ssim": NaN,
+        "mean_overlap_frac": NaN
+      },
+      "volume": {
+        "n_sightings": 0,
+        "n_reciprocal": 0,
+        "n_matched_white": 0,
+        "n_overlap_white": 0,
+        "n_pixel_events": 0
+      }
+    },
+    "model": {
+      "tier_a": {
+        "detection_rate": 0.24348046409542032,
+        "position_error": 2.502045454624254,
+        "mean_detected_per_frame": 8.59322033898305,
+        "mean_gt_visible_per_frame": 6.199623352165726
+      },
+      "consistency": {
+        "reciprocity_rate": 0.408262534650689,
+        "displacement_error": 69.46193088332383,
+        "motion_error": 35.388447125748684,
+        "white_correspondence": 0.04224522247778062,
+        "white_count_error": 2.5214095952492577,
+        "sightings_per_frame": 0.7777777777777777
+      },
+      "pixel": {
+        "psnr": 11.785318858402476,
+        "ssim": 0.6291691511364885,
+        "mean_overlap_frac": 0.6518953671807851
+      },
+      "volume": {
+        "n_sightings": 413,
+        "n_reciprocal": 108,
+        "n_matched_white": 62,
+        "n_overlap_white": 768,
+        "n_pixel_events": 108
+      }
+    },
+    "baseline": {
+      "tier_a": {
+        "detection_rate": 0.23217567754719562,
+        "position_error": 1.9678603657662357,
+        "mean_detected_per_frame": 3.7796610169491527,
+        "mean_gt_visible_per_frame": 6.199623352165726
+      },
+      "consistency": {
+        "reciprocity_rate": 0.22058018609742747,
+        "displacement_error": 82.53259267562476,
+        "motion_error": 6.676792051423998,
+        "white_correspondence": 0.0,
+        "white_count_error": 0.9316239316239318,
+        "sightings_per_frame": 0.5273069679849341
+      },
+      "pixel": {
+        "psnr": 18.61493092320622,
+        "ssim": 0.8747764229774475,
+        "mean_overlap_frac": 0.7189404088207798
+      },
+      "volume": {
+        "n_sightings": 280,
+        "n_reciprocal": 43,
+        "n_matched_white": 0,
+        "n_overlap_white": 43,
+        "n_pixel_events": 43
+      }
+    }
+  },
+  "psnr_by_overlap": {
+    "0.00-0.50": {
+      "ceiling": null,
+      "model": 10.894566285951607,
+      "baseline": 17.264430357430925
+    },
+    "0.50-0.75": {
+      "ceiling": null,
+      "model": 11.521270819083055,
+      "baseline": 18.855490999139267
+    },
+    "0.75-1.01": {
+      "ceiling": null,
+      "model": 10.33633964773952,
+      "baseline": 19.399114889281286
+    }
+  }
+}

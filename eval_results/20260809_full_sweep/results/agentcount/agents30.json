@@ -1,0 +1,102 @@
+{
+  "experiment": "agents30",
+  "config": "config/train_flockdit_latent_multi_stream.yaml",
+  "overrides": [
+    "vae.checkpoint_path=/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt",
+    "data.num_agents=30",
+    "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=false,collection.partial_agents=30]",
+    "output_dir=/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents30-10826537_5"
+  ],
+  "output_dir": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents30-10826537_5",
+  "streaming": true,
+  "num_agents": 30,
+  "background_size": null,
+  "eval_args": {
+    "episodes": 3,
+    "seconds": 6.0,
+    "sim_fps": 30,
+    "steps": 25,
+    "eval_seed": 0,
+    "baseline": "none"
+  },
+  "model_checkpoint": {
+    "path": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents30-10826537_5/checkpoints/epoch_0018.pt",
+    "val_loss": 0.3325751144438982
+  },
+  "baseline_config": null,
+  "baseline_output_dir": null,
+  "baseline_checkpoint": null,
+  "n_ep": 3,
+  "columns": {
+    "ceiling": {
+      "tier_a": {
+        "detection_rate": 0.9709032909636912,
+        "position_error": 1.4826443715784734,
+        "mean_detected_per_frame": 5.197928436911488,
+        "mean_gt_visible_per_frame": 5.334777150031388
+      },
+      "consistency": {
+        "reciprocity_rate": 0.06525808928157928,
+        "displacement_error": 22.204830507617405,
+        "motion_error": 3.4360373311105348,
+        "white_correspondence": 0.5296713070343871,
+        "white_count_error": 0.43404867323273394,
+        "sightings_per_frame": 0.041972422451674346
+      },
+      "pixel": {
+        "psnr": 23.61657217697471,
+        "ssim": 0.8747234018135428,
+        "mean_overlap_frac": 0.6057325425261041
+      },
+      "volume": {
+        "n_sightings": 9695,
+        "n_reciprocal": 314,
+        "n_matched_white": 338,
+        "n_overlap_white": 687,
+        "n_pixel_events": 314
+      }
+    },
+    "model": {
+      "tier_a": {
+        "detection_rate": 0.27231957599822376,
+        "position_error": 2.039871780131886,
+        "mean_detected_per_frame": 5.1537350910232265,
+        "mean_gt_visible_per_frame": 5.334777150031388
+      },
+      "consistency": {
+        "reciprocity_rate": 0.059593351323330386,
+        "displacement_error": 57.758918979817565,
+        "motion_error": 26.478517685293554,
+        "white_correspondence": 0.13882145383716807,
+        "white_count_error": 1.7246853873022097,
+        "sightings_per_frame": 0.08288849925319826
+      },
+      "pixel": {
+        "psnr": 16.021854356865088,
+        "ssim": 0.6611577182720032,
+        "mean_overlap_frac": 0.6776287476515304
+      },
+      "volume": {
+        "n_sightings": 19146,
+        "n_reciprocal": 575,
+        "n_matched_white": 200,
+        "n_overlap_white": 1553,
+        "n_pixel_events": 575
+      }
+    }
+  },
+  "psnr_by_overlap": {
+    "0.00-0.50": {
+      "ceiling": 25.64425749857705,
+      "model": 19.844607836502444
+    },
+    "0.50-0.75": {
+      "ceiling": 24.089806439152948,
+      "model": 16.568872475278944
+    },
+    "0.75-1.01": {
+      "ceiling": 18.531042573746856,
+      "model": 14.91726475096025
+    }
+  }
+}

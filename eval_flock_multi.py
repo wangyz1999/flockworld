@@ -74,12 +74,13 @@ def _num_camera_agents(cfg, default: int) -> int:
     return int(default)
 
 
-def _load_model(cfg, output_dir, device):
+def _load_model(cfg, output_dir, device, return_info=False):
     ckpt, val = find_best_checkpoint(Path(output_dir) / "checkpoints")
     print(f"checkpoint: {ckpt} (val_loss={val:.5f})")
     m = build_model(cfg).to(device)
     m.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=False)["model"])
-    return m.eval()
+    m = m.eval()
+    return (m, str(ckpt), val) if return_info else m
 
 
 def _decode_detect(lat, decode_fn, background_size=None):
@@ -200,6 +201,34 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
     print("NB: a sparse world scores high on rates at near-zero volume — compare columns at similar volume.")
     print("model should beat the single-agent baseline on agreement AND approach the ceiling (detector/hue floor).")
 
+    # Structured results, mirroring the printed tables, for --save-json (see main()).
+    results = {"n_ep": n_ep, "columns": {}}
+    for s in cols:
+        results["columns"][s] = {
+            "tier_a": {k: mean(A[s], k) for k in
+                       ["detection_rate", "position_error", "mean_detected_per_frame",
+                        "mean_gt_visible_per_frame"]},
+            "consistency": {k: mean(B[s], k) for k in
+                            ["reciprocity_rate", "displacement_error", "motion_error",
+                             "white_correspondence", "white_count_error", "sightings_per_frame"]},
+            "pixel": {k: mean(C[s], k) for k in ["psnr", "ssim", "mean_overlap_frac"]},
+            "volume": {
+                "n_sightings": total(B[s], "n_sightings"),
+                "n_reciprocal": total(B[s], "n_reciprocal"),
+                "n_matched_white": total(B[s], "n_matched_white"),
+                "n_overlap_white": total(B[s], "n_overlap_white"),
+                "n_pixel_events": total(C[s], "n_pixel_events"),
+            },
+        }
+    results["psnr_by_overlap"] = {}
+    for lo, hi in [(0.0, 0.5), (0.5, 0.75), (0.75, 1.01)]:
+        key = f"{lo:.2f}-{hi:.2f}"
+        results["psnr_by_overlap"][key] = {}
+        for c in cols:
+            v = [p for (f, p, _s) in ev[c] if lo <= f < hi]
+            results["psnr_by_overlap"][key][c] = float(np.mean(v)) if v else None
+    return results
+
 
 @torch.no_grad()
 def run_overlay(cfg, model, ds, decode_fn, device, args):
@@ -251,6 +280,11 @@ def main():
                          "setups only (see boid_detect.detect_boids). Auto-defaults to 31 when "
                          "the config's sim_overrides set rendering.background_gradient=true; "
                          "pass explicitly to override, or 0 to force it off.")
+    ap.add_argument("--save-json", default=None,
+                    help="metrics mode: write the structured results table to this JSON path.")
+    ap.add_argument("--tag", default=None,
+                    help="experiment name recorded in --save-json output; defaults to the "
+                         "output_dir's basename.")
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
 
@@ -304,17 +338,44 @@ def main():
             args.baseline_config = "config/train_flockdit_latent.yaml"
 
     model = baseline_model = None
+    model_ckpt = baseline_ckpt = None
     if args.mode == "metrics" or args.source == "pred":
         print("multi-agent model:")
-        model = _load_model(cfg, cfg.output_dir, device)
+        model, ckpt_path, val_loss = _load_model(cfg, cfg.output_dir, device, return_info=True)
+        model_ckpt = {"path": ckpt_path, "val_loss": val_loss}
     if args.mode == "metrics" and args.baseline == "single":
         bov = [f"output_dir={args.baseline_output_dir}"] if args.baseline_output_dir else []
         bcfg = load_cfg(args.baseline_config, bov)
         print("single-agent baseline model:")
-        baseline_model = _load_model(bcfg, bcfg.output_dir, device)
+        baseline_model, bckpt_path, bval_loss = _load_model(bcfg, bcfg.output_dir, device, return_info=True)
+        baseline_ckpt = {"path": bckpt_path, "val_loss": bval_loss}
 
     if args.mode == "metrics":
-        run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args)
+        results = run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args)
+        if args.save_json:
+            import json
+            payload = {
+                "experiment": args.tag or Path(cfg.output_dir).name,
+                "config": args.config,
+                "overrides": args.overrides,
+                "output_dir": str(cfg.output_dir),
+                "streaming": streaming,
+                "num_agents": int(cfg.data.num_agents),
+                "background_size": args.background_size,
+                "eval_args": {
+                    "episodes": args.episodes, "seconds": args.seconds, "sim_fps": args.sim_fps,
+                    "steps": args.steps, "eval_seed": args.eval_seed, "baseline": args.baseline,
+                },
+                "model_checkpoint": model_ckpt,
+                "baseline_config": args.baseline_config if args.baseline == "single" else None,
+                "baseline_output_dir": args.baseline_output_dir if args.baseline == "single" else None,
+                "baseline_checkpoint": baseline_ckpt,
+                **results,
+            }
+            out_path = Path(args.save_json)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(payload, indent=2))
+            print(f"\nwrote metrics JSON -> {out_path}")
     else:
         run_overlay(cfg, model, ds, decode_fn, device, args)
 

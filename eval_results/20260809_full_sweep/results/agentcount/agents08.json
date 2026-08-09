@@ -1,0 +1,136 @@
+{
+  "experiment": "agents08",
+  "config": "config/train_flockdit_latent_multi_stream.yaml",
+  "overrides": [
+    "vae.checkpoint_path=/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt",
+    "data.num_agents=8",
+    "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=false,collection.partial_agents=8]",
+    "output_dir=/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents08-10826537_2"
+  ],
+  "output_dir": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents08-10826537_2",
+  "streaming": true,
+  "num_agents": 8,
+  "background_size": null,
+  "eval_args": {
+    "episodes": 3,
+    "seconds": 6.0,
+    "sim_fps": 30,
+    "steps": 25,
+    "eval_seed": 0,
+    "baseline": "single"
+  },
+  "model_checkpoint": {
+    "path": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents08-10826537_2/checkpoints/epoch_0092.pt",
+    "val_loss": 0.3255581669509411
+  },
+  "baseline_config": "config/train_flockdit_latent_single_stream.yaml",
+  "baseline_output_dir": "/project2/ustun_1726/flowckworld/output/flock_dit_single_stream_floor",
+  "baseline_checkpoint": {
+    "path": "/project2/ustun_1726/flowckworld/output/flock_dit_single_stream_floor/checkpoints/epoch_0252.pt",
+    "val_loss": 0.3094778014346957
+  },
+  "n_ep": 3,
+  "columns": {
+    "ceiling": {
+      "tier_a": {
+        "detection_rate": 0.974541739281,
+        "position_error": 1.480111258665672,
+        "mean_detected_per_frame": 5.346751412429378,
+        "mean_gt_visible_per_frame": 5.462570621468927
+      },
+      "consistency": {
+        "reciprocity_rate": 0.12150597590244612,
+        "displacement_error": 16.36249251392755,
+        "motion_error": 0.6931110812971989,
+        "white_correspondence": 0.37435580292723153,
+        "white_count_error": 0.5869565217391304,
+        "sightings_per_frame": 0.028719397363465158
+      },
+      "pixel": {
+        "psnr": 21.677819913254133,
+        "ssim": 0.8442229865136041,
+        "mean_overlap_frac": 0.5504211908272604
+      },
+      "volume": {
+        "n_sightings": 427,
+        "n_reciprocal": 34,
+        "n_matched_white": 71,
+        "n_overlap_white": 115,
+        "n_pixel_events": 34
+      }
+    },
+    "model": {
+      "tier_a": {
+        "detection_rate": 0.3066038934346162,
+        "position_error": 2.285133069429445,
+        "mean_detected_per_frame": 11.011064030131827,
+        "mean_gt_visible_per_frame": 5.462570621468927
+      },
+      "consistency": {
+        "reciprocity_rate": 0.22298623677062146,
+        "displacement_error": 68.02523285689863,
+        "motion_error": 40.44130310282481,
+        "white_correspondence": 0.06029787232526521,
+        "white_count_error": 3.082757354230759,
+        "sightings_per_frame": 0.39837234328759746
+      },
+      "pixel": {
+        "psnr": 11.04752817435577,
+        "ssim": 0.5397114559048126,
+        "mean_overlap_frac": 0.6615980461537405
+      },
+      "volume": {
+        "n_sightings": 5923,
+        "n_reciprocal": 677,
+        "n_matched_white": 278,
+        "n_overlap_white": 4467,
+        "n_pixel_events": 677
+      }
+    },
+    "baseline": {
+      "tier_a": {
+        "detection_rate": 0.23045935470754975,
+        "position_error": 2.0847824047385983,
+        "mean_detected_per_frame": 2.868408662900188,
+        "mean_gt_visible_per_frame": 5.462570621468927
+      },
+      "consistency": {
+        "reciprocity_rate": 0.056231778337041495,
+        "displacement_error": 58.71208731787545,
+        "motion_error": 5.79037223641689,
+        "white_correspondence": 0.12121212121212122,
+        "white_count_error": 1.0825396825396825,
+        "sightings_per_frame": 0.10068603712671509
+      },
+      "pixel": {
+        "psnr": 16.303247219840898,
+        "ssim": 0.8060309795633196,
+        "mean_overlap_frac": 0.6005586654420884
+      },
+      "volume": {
+        "n_sightings": 1497,
+        "n_reciprocal": 48,
+        "n_matched_white": 8,
+        "n_overlap_white": 70,
+        "n_pixel_events": 48
+      }
+    }
+  },
+  "psnr_by_overlap": {
+    "0.00-0.50": {
+      "ceiling": 20.250669347074055,
+      "model": 11.26092016830481,
+      "baseline": 15.935310420406235
+    },
+    "0.50-0.75": {
+      "ceiling": 23.828967786528718,
+      "model": 10.751821498448892,
+      "baseline": 16.860489989283465
+    },
+    "0.75-1.01": {
+      "ceiling": 29.463823255050997,
+      "model": 10.902435287167778,
+      "baseline": 16.658339506275293
+    }
+  }
+}
