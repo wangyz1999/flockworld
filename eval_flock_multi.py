@@ -17,6 +17,11 @@ Two modes (``--mode``):
                  (in-distribution, the "why not just run 10 single-agent models" floor);
         none   = skip.
 
+  Dart color identity is smoothed along tracks by default (the VAE flashes colors
+  for stretches of frames, which a per-frame hue read turns into lost sightings);
+  ``--no-hue-smooth`` restores the per-frame read, ``--hue-smooth-window`` /
+  ``--hue-link-dist`` tune it. See ``pair_consistency.smooth_identities``.
+
 Usage:
   uv run python eval_flock_multi.py --config config/train_flockdit_latent_multi.yaml \
     --mode metrics --episodes 6 --seconds 10 --baseline single \
@@ -83,12 +88,18 @@ def _load_model(cfg, output_dir, device, return_info=False):
     return (m, str(ckpt), val) if return_info else m
 
 
-def _decode_detect(lat, decode_fn, background_size=None):
-    """lat (P, T, z, h, w) -> (frames[agent] (Tp,H,W,3) uint8, dets[agent][frame] dict).
+def _decode_detect(lat, decode_fn, background_size=None, n_cam=None,
+                   hue_smooth_window=0, hue_link_dist=8.0):
+    """lat (P, T, z, h, w) -> (frames[agent] (Tp,H,W,3) uint8, dets[agent][frame] dict, stats).
 
     Decode each agent's latents ONCE; keep the pixel frames (for pixel_consistency)
     and run the dart detector on them (centroids+hue for tier_a / pair_consistency).
     ``background_size``: gradient-background setups only -- see boid_detect.detect_boids.
+
+    ``n_cam`` (not None) additionally runs ``pair_consistency.smooth_identities``:
+    the VAE flashes dart colors for stretches of frames, so each dart's identity is
+    voted along its track rather than read per frame. Pass ``n_cam=None`` for the
+    raw per-frame behavior. ``stats`` is ``None`` when smoothing is off.
     """
     frames_all, dets_all = [], []
     for j in range(lat.shape[0]):
@@ -96,7 +107,11 @@ def _decode_detect(lat, decode_fn, background_size=None):
         frames_all.append(frames)
         dets_all.append([detect_boids(frames[t], background_size=background_size)
                           for t in range(len(frames))])
-    return frames_all, dets_all
+    stats = None
+    if n_cam is not None:
+        dets_all, stats = pc.smooth_identities(dets_all, n_cam, window=int(hue_smooth_window),
+                                               max_link=float(hue_link_dist))
+    return frames_all, dets_all, stats
 
 
 def _cfg_has_gradient(cfg) -> bool:
@@ -132,9 +147,14 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
     cols = ["ceiling", "model"] + ([] if args.baseline == "none" else ["baseline"])
     A = {s: [] for s in cols}; B = {s: [] for s in cols}; C = {s: [] for s in cols}
     ev = {s: [] for s in cols}                             # (overlap_frac, psnr, ssim) per pixel event
+    S = {s: [] for s in cols}                              # hue-smoothing stats per episode
     n_cam = _num_camera_agents(cfg, cfg.data.num_agents)   # hue period for identity colors
+    smooth_cam = None if args.no_hue_smooth else n_cam     # None -> per-frame hue, no smoothing
     print(f"metrics: {args.seconds}s = {n_lat} latent frames, {n_ep} episodes "
           f"(baseline={args.baseline}, n_cam={n_cam})")
+    print("hue smoothing: OFF (per-frame identity)" if args.no_hue_smooth else
+          f"hue smoothing: ON (window={args.hue_smooth_window or 'whole track'}, "
+          f"link={args.hue_link_dist:g}px)")
     for e in range(n_ep):
         ep = ds.full_episode(e); ctx = int(ep["context_len"]); T = min(n_lat, ep["frames"].shape[1])
         cam_idx = [ai - 1 for ai in ep["agent_indices"]]
@@ -148,7 +168,11 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
         if args.baseline == "single":
             lat["baseline"] = _rollout_single(baseline_model, frames, actions, ctx, T, wf, steps)
         for s in cols:
-            frames, dets = _decode_detect(lat[s], decode_fn, background_size=args.background_size)
+            frames, dets, sm = _decode_detect(
+                lat[s], decode_fn, background_size=args.background_size, n_cam=smooth_cam,
+                hue_smooth_window=args.hue_smooth_window, hue_link_dist=args.hue_link_dist)
+            if sm is not None:
+                S[s].append(sm)
             cents = [[d["centroids"] for d in ag] for ag in dets]   # tier_a needs centroids only
             A[s].append(cs.tier_a(cents, pos, cam_idx))
             B[s].append(pc.pair_consistency(dets, cam_idx, n_cam))   # GT-free (no pos)
@@ -186,6 +210,15 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
                           (C, "n_pixel_events", "pixel_events")]:
         print(f"{lab:>26}" + "".join(f"{total(acc[c], key):>10}" for c in cols))
 
+    # How unstable the per-frame color read was: the fraction of detections whose
+    # identity the track vote overrode. The ceiling column is the VAE-only flash
+    # floor (GT latents in), so model-minus-ceiling is the model's own color drift.
+    if any(S[c] for c in cols):
+        print("\nhue-flash diagnostics (fraction of darts relabeled by the track vote):")
+        print(f"{'':>26}" + "".join(f"{c:>10}" for c in cols))
+        for key, lab in [("relabeled_frac", "relabeled_frac"), ("mean_track_len", "mean_track_len")]:
+            print(f"{lab:>26}" + "".join(f"{mean(S[c], key):>10.3f}" for c in cols))
+
     # PSNR stratified by overlap fraction (the "harder when bigger" check): does dense
     # agreement decay as the shared region grows? All GT-free.
     print("\nPSNR by overlap fraction:")
@@ -219,6 +252,8 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
                 "n_overlap_white": total(B[s], "n_overlap_white"),
                 "n_pixel_events": total(C[s], "n_pixel_events"),
             },
+            "hue_smoothing": ({k: mean(S[s], k) for k in
+                               ["relabeled_frac", "n_tracks", "mean_track_len"]} if S[s] else None),
         }
     results["psnr_by_overlap"] = {}
     for lo, hi in [(0.0, 0.5), (0.5, 0.75), (0.75, 1.01)]:
@@ -280,6 +315,19 @@ def main():
                          "setups only (see boid_detect.detect_boids). Auto-defaults to 31 when "
                          "the config's sim_overrides set rendering.background_gradient=true; "
                          "pass explicitly to override, or 0 to force it off.")
+    ap.add_argument("--hue-smooth-window", type=int, default=0,
+                    help="metrics mode: temporal color-identity smoothing width, in DECODED "
+                         "frames (30 fps). 0 (default) = one identity vote per track, which is "
+                         "what survives a VAE color flash lasting seconds; N>=3 = centered "
+                         "N-frame rolling vote, which only outvotes flashes shorter than N/2.")
+    ap.add_argument("--hue-link-dist", type=float, default=8.0,
+                    help="metrics mode: max per-frame centroid motion (px) for the identity "
+                         "tracker to link two detections. Default 8 = the sim's worst-case "
+                         "dart-vs-crop relative motion (boids cap at 4 px/tick, crop rides the "
+                         "camera agent). Lower = more broken tracks = less smoothing.")
+    ap.add_argument("--no-hue-smooth", action="store_true",
+                    help="metrics mode: disable temporal identity smoothing and read each dart's "
+                         "color per frame (the behavior before smoothing was added).")
     ap.add_argument("--save-json", default=None,
                     help="metrics mode: write the structured results table to this JSON path.")
     ap.add_argument("--tag", default=None,
@@ -362,6 +410,8 @@ def main():
                 "streaming": streaming,
                 "num_agents": int(cfg.data.num_agents),
                 "background_size": args.background_size,
+                "hue_smooth": (None if args.no_hue_smooth else
+                               {"window": args.hue_smooth_window, "link_dist": args.hue_link_dist}),
                 "eval_args": {
                     "episodes": args.episodes, "seconds": args.seconds, "sim_fps": args.sim_fps,
                     "steps": args.steps, "eval_seed": args.eval_seed, "baseline": args.baseline,

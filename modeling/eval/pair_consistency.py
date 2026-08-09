@@ -19,6 +19,17 @@ rotation, so a dart at pixel ``p`` implies world offset ``p - HALF`` from that
 agent. Identity inversion: ``round(hue * n_cam) % n_cam`` recovers the boid index
 (hue == index / n_cam at generation), with a half-slot tolerance so a wrong-hue
 dart is rejected rather than misassigned (achromatic darts read as white = NaN).
+
+TEMPORAL IDENTITY SMOOTHING (``smooth_identities``, on by default in the eval
+drivers): the VAE decoder flashes a dart's color for stretches of frames, so a
+per-frame hue read mislabels it while the flash lasts -- the sighting is dropped
+or the dart falls into the white (third-party) pool, and every rate above moves
+for a reason that has nothing to do with the model's spatial coherence. A boid
+does not change identity mid-flight, so identity is voted along a track instead
+of read per frame: link detections frame-to-frame by position, then give the
+whole track one label (or a rolling window vote). This only RELABELS darts the
+model actually drew -- it never invents a detection -- so the volume counts stay
+honest and the metric stays self-triggered.
 """
 
 from __future__ import annotations
@@ -54,6 +65,120 @@ def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
     return ident
 
 
+# --------------------------------------------------------------------------- #
+# Temporal identity smoothing (VAE color-flash robustness)
+# --------------------------------------------------------------------------- #
+IDENT_WHITE = -2      # achromatic dart -> a third-party (non-camera) boid
+IDENT_UNKNOWN = -1    # chromatic but off-palette -> no identity claimed
+
+
+def _frame_labels(view: dict, n_cam: int, tol: float) -> np.ndarray:
+    """Per-detection identity label for one frame: slot >= 0, IDENT_WHITE, IDENT_UNKNOWN."""
+    hue = np.asarray(view["hue"], np.float32)
+    lab = _identify(hue, n_cam, tol)          # -1 for NaN *and* for off-palette
+    lab[np.isnan(hue)] = IDENT_WHITE          # separate the two: white is a real class
+    return lab
+
+
+def _link_tracks(view_dets, max_link: float = 8.0, amb: float = 0.7):
+    """Link detections frame-to-frame by position -> list of tracks ``[(t, i), ...]``.
+
+    Optimal assignment on consecutive-frame centroid distance. A link is kept only
+    if it is both close (``<= max_link`` px) and unambiguous (best distance
+    ``<= amb *`` second-best for that dart, same stage-3 rule as
+    ``match_cross_view``). Anything else BREAKS the track -- a broken track just
+    means less smoothing (it degrades toward per-frame behavior), whereas a wrong
+    link would hand one boid's color vote to another.
+
+    ``max_link`` defaults to 8 px = the worst-case per-frame relative motion in the
+    crop: boids cap at 4 px/tick (``config/data_recording.yaml``) and the crop
+    itself rides the camera agent, so dart-vs-crop motion is bounded by 2x that.
+    """
+    tracks: list[list[tuple[int, int]]] = []
+    ids = [np.full(len(np.asarray(d["centroids"], np.float32)), -1, np.int64) for d in view_dets]
+    prv = np.zeros((0, 2), np.float32)
+    for t in range(len(view_dets)):
+        cur = np.asarray(view_dets[t]["centroids"], np.float32)
+        if t > 0 and len(cur) and len(prv):
+            cost = np.linalg.norm(prv[:, None, :] - cur[None, :, :], axis=-1)
+            ri, ci = linear_sum_assignment(cost)
+            for i, j in zip(ri, ci):
+                if cost[i, j] > max_link:
+                    continue                                  # moved too far -> new track
+                srt = np.sort(cost[i])
+                if len(srt) > 1 and cost[i, j] > amb * srt[1]:
+                    continue                                  # ambiguous -> break, don't guess
+                ids[t][j] = ids[t - 1][i]
+        for j in range(len(cur)):
+            if ids[t][j] < 0:
+                ids[t][j] = len(tracks); tracks.append([])
+            tracks[ids[t][j]].append((t, j))
+        prv = cur
+    return tracks, ids
+
+
+def _vote(labels) -> int:
+    """Majority identity over a track segment.
+
+    ``IDENT_UNKNOWN`` votes are ABSTENTIONS, not a class: a frame where the hue
+    landed near a palette boundary should not outvote frames that read cleanly.
+    Ties go to the smallest label, so white beats a color -- the conservative
+    direction, since a sighting is what this metric is triggered by.
+    """
+    v = [int(x) for x in labels if int(x) != IDENT_UNKNOWN]
+    if not v:
+        return IDENT_UNKNOWN
+    uq, cnt = np.unique(np.asarray(v), return_counts=True)
+    return int(uq[int(np.argmax(cnt))])
+
+
+def smooth_identities(dets, n_cam: int, window: int = 0, max_link: float = 8.0,
+                      id_tol: float = 0.25, amb: float = 0.7):
+    """Vote each dart's color identity along its track instead of reading it per frame.
+
+    Args:
+        dets:    ``dets[a][t]`` -> detect_boids dict, as passed to ``pair_consistency``.
+        window:  vote width in DECODED FRAMES (30 fps, so 31 ~= 1 s). ``<= 1`` votes
+            once over the whole track -- the default, and the only setting that
+            survives a flash lasting seconds, since a centered window of ``w``
+            only outvotes flashes shorter than ``w / 2``. Use a finite ``window``
+            when tracks are long enough that one identity for the whole track is
+            the wrong assumption (e.g. suspected track merges).
+        max_link, amb: tracker gates, see ``_link_tracks``.
+
+    Returns ``(dets_out, stats)``. ``dets_out`` mirrors ``dets`` with an added
+    ``ident`` array per frame; ``_find`` / ``_whites`` prefer ``ident`` when it is
+    present and fall back to the per-frame hue read when it is not, so callers that
+    skip this function keep the exact pre-smoothing behavior.
+    """
+    out, n_changed, n_total, track_lens = [], 0, 0, []
+    for view in dets:
+        lab = [_frame_labels(v, n_cam, id_tol) for v in view]
+        tracks, _ = _link_tracks(view, max_link, amb)
+        new = [l.copy() for l in lab]
+        for tr in tracks:
+            track_lens.append(len(tr))
+            seq = [int(lab[t][i]) for t, i in tr]
+            if window > 1:
+                h = window // 2
+                sm = [_vote(seq[max(0, k - h):k + h + 1]) for k in range(len(seq))]
+            else:
+                sm = [_vote(seq)] * len(seq)                   # one identity per track
+            for (t, i), s in zip(tr, sm):
+                new[t][i] = s
+        for t in range(len(view)):
+            n_changed += int(np.count_nonzero(new[t] != lab[t]))
+            n_total += int(len(lab[t]))
+        out.append([{**view[t], "ident": new[t]} for t in range(len(view))])
+    return out, {
+        "relabeled_frac": n_changed / max(n_total, 1),   # how much per-frame color was unstable
+        "n_relabeled": n_changed,
+        "n_detections": n_total,
+        "n_tracks": len(track_lens),
+        "mean_track_len": float(np.mean(track_lens)) if track_lens else 0.0,
+    }
+
+
 def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
     """Pixel ``(u, v)`` of the dart identified as ``target`` in ``view``, or None.
 
@@ -65,28 +190,42 @@ def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
     Darts within ``FOCAL_EXCLUDE_PX`` of crop center are ignored: that is the
     view owner's own dart, never a valid sighting of another agent (its hue-drift
     tail was ~30% of ceiling sightings, all one-sided phantoms).
+
+    Identity comes from ``view['ident']`` when ``smooth_identities`` has run
+    (track-voted, flash-robust); otherwise it is read from this frame's hue alone.
     """
     cents = np.asarray(view["centroids"], np.float32)
     if len(cents) == 0:
         return None
     hues = np.asarray(view["hue"], np.float32)
+    ident = view.get("ident")
+    ident = _identify(hues, n_cam, tol) if ident is None else np.asarray(ident, np.int64)
     away = np.linalg.norm(cents - HALF, axis=1) > FOCAL_EXCLUDE_PX
-    cents, hues = cents[away], hues[away]
+    cents, hues, ident = cents[away], hues[away], ident[away]
     if len(cents) == 0:
         return None
-    cand = np.nonzero(_identify(hues, n_cam, tol) == target)[0]
+    cand = np.nonzero(ident == target)[0]
     if len(cand) == 0:
         return None
     d = np.abs(hues[cand] - target / n_cam)
     d = np.minimum(d, 1.0 - d)
+    d = np.nan_to_num(d, nan=1.0)          # a smoothed-in identity may have a NaN raw hue
     return cents[int(cand[int(np.argmin(d))])]
 
 
 def _whites(view: dict) -> np.ndarray:
-    """White (achromatic, NaN-hue) dart centroids (M,2) -- the third-party boids."""
+    """White (achromatic) dart centroids (M,2) -- the third-party boids.
+
+    Uses the track-voted ``ident`` when smoothing has run, so a white boid that
+    flashes colored (or a camera agent that flashes white) does not jump between
+    the sighting pool and the third-party pool mid-flight.
+    """
     cents = np.asarray(view["centroids"], np.float32)
     if len(cents) == 0:
         return cents
+    ident = view.get("ident")
+    if ident is not None:
+        return cents[np.asarray(ident, np.int64) == IDENT_WHITE]
     return cents[np.isnan(np.asarray(view["hue"], np.float32))]
 
 

@@ -92,7 +92,9 @@ CONSISTENCY_LABELS = {
 
 @torch.no_grad()
 def _all_metrics(lat, decode_fn, pos, cam_idx, n_cam):
-    frames, dets = _decode_detect(lat, decode_fn)
+    # n_cam -> track-voted dart identities (VAE color-flash robustness); see
+    # pair_consistency.smooth_identities. Same default as eval_flock_multi.
+    frames, dets, _ = _decode_detect(lat, decode_fn, n_cam=n_cam)
     cents = [[d["centroids"] for d in ag] for ag in dets]
     tier_a = cs.tier_a(cents, pos, cam_idx)
     pair = pc.pair_consistency(dets, cam_idx, n_cam)
