@@ -93,11 +93,11 @@ def _decode_detect(lat, decode_fn, background_size=None, n_cam=None,
     """lat (P, T, z, h, w) -> (frames[agent] (Tp,H,W,3) uint8, dets[agent][frame] dict, stats).
 
     Decode each agent's latents ONCE; keep the pixel frames (for pixel_consistency)
-    and run the dart detector on them (centroids+hue for tier_a / pair_consistency).
+    and run the boid detector on them (centroids+hue for tier_a / pair_consistency).
     ``background_size``: gradient-background setups only -- see boid_detect.detect_boids.
 
     ``n_cam`` (not None) additionally runs ``pair_consistency.smooth_identities``:
-    the VAE flashes dart colors for stretches of frames, so each dart's identity is
+    the VAE flashes boid colors for stretches of frames, so each boid's identity is
     voted along its track rather than read per frame. Pass ``n_cam=None`` for the
     raw per-frame behavior. ``stats`` is ``None`` when smoothing is off.
     """
@@ -214,7 +214,7 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
     # identity the track vote overrode. The ceiling column is the VAE-only flash
     # floor (GT latents in), so model-minus-ceiling is the model's own color drift.
     if any(S[c] for c in cols):
-        print("\nhue-flash diagnostics (fraction of darts relabeled by the track vote):")
+        print("\nhue-flash diagnostics (fraction of boids relabeled by the track vote):")
         print(f"{'':>26}" + "".join(f"{c:>10}" for c in cols))
         for key, lab in [("relabeled_frac", "relabeled_frac"), ("mean_track_len", "mean_track_len")]:
             print(f"{lab:>26}" + "".join(f"{mean(S[c], key):>10.3f}" for c in cols))
@@ -311,7 +311,7 @@ def main():
     ap.add_argument("--eval-seed", type=int, default=0,
                     help="streaming only: base seed for the held-out eval episodes.")
     ap.add_argument("--background-size", type=int, default=None,
-                    help="dart-detector background-subtraction kernel, gradient-background "
+                    help="boid-detector background-subtraction kernel, gradient-background "
                          "setups only (see boid_detect.detect_boids). Auto-defaults to 31 when "
                          "the config's sim_overrides set rendering.background_gradient=true; "
                          "pass explicitly to override, or 0 to force it off.")
@@ -323,10 +323,10 @@ def main():
     ap.add_argument("--hue-link-dist", type=float, default=8.0,
                     help="metrics mode: max per-frame centroid motion (px) for the identity "
                          "tracker to link two detections. Default 8 = the sim's worst-case "
-                         "dart-vs-crop relative motion (boids cap at 4 px/tick, crop rides the "
+                         "boid-vs-crop relative motion (boids cap at 4 px/tick, crop rides the "
                          "camera agent). Lower = more broken tracks = less smoothing.")
     ap.add_argument("--no-hue-smooth", action="store_true",
-                    help="metrics mode: disable temporal identity smoothing and read each dart's "
+                    help="metrics mode: disable temporal identity smoothing and read each boid's "
                          "color per frame (the behavior before smoothing was added).")
     ap.add_argument("--save-json", default=None,
                     help="metrics mode: write the structured results table to this JSON path.")

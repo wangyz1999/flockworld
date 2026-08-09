@@ -10,14 +10,22 @@ experiment, reusing the same decoded frames the metrics pass already computed.
 
 Experiments are looked up by name in EXPERIMENTS below (checkpoint dirs under
 flockdit_streaming_20260715/, see jobs/flockdit_streaming_20260715/flockdit_streaming.job
-for the authoritative run-key -> config mapping). Add exp04/exp07/exp08 here once
-their two-stage retraining finishes (their run dirs currently hold only a stage1
-checkpoint -- see flockdit_streaming_20260715/exp0{4,7,8}_*/logs/stderr.log).
+for the authoritative run-key -> config mapping). The two-stage runs (exp04/07/08)
+come from the 2026-07-27 re-run, SLURM job 10621962; the columns are their stage-2
+(multi-agent) checkpoints. exp05 (density) has never been run.
+
+CAVEAT on exp04: its stage 2 landed on a faster node (b02-06) and did 547k steps in
+its 35h50m, vs ~298k for exp07/exp08 and ~394k for the from-scratch runs in their
+47h40m. Equal wall clock, unequal optimizer steps -- read its column with that in mind.
 
 Usage:
   uv run python compare_experiments.py --include exp01_baseline exp02_tiled
   uv run python compare_experiments.py --include exp01_baseline exp02_tiled \
       exp03_diffusion_forcing exp06_tiled_df --episodes 6 --seconds 10
+  # all seven finished experiments in one table:
+  uv run python compare_experiments.py --include exp01_baseline exp02_tiled \
+      exp03_diffusion_forcing exp04_two_stage exp06_tiled_df exp07_tiled_df_two_stage \
+      exp08_tiled_two_stage --episodes 6 --seconds 10
 """
 
 from __future__ import annotations
@@ -60,12 +68,30 @@ EXPERIMENTS = {
         "config/train_flockdit_latent_multi_stream_tiled_df.yaml",
         f"{RUN_ROOT}/exp06_tiled_df-10290187_4",
     ),
+    # Two-stage runs: single-agent pretrain -> multi-agent fine-tune. The output_dir
+    # holds the STAGE-2 checkpoints; stage1/ alongside it holds the pretrain (which is
+    # also what FLOOR_OUTPUT_DIR below points at).
+    "exp04_two_stage": (
+        "config/train_flockdit_latent_multi_stream_twostage.yaml",
+        f"{RUN_ROOT}/exp04_two_stage-10621962_3",
+    ),
+    "exp07_tiled_df_two_stage": (
+        "config/train_flockdit_latent_multi_stream_triple.yaml",
+        f"{RUN_ROOT}/exp07_tiled_df_two_stage-10621962_5",
+    ),
+    "exp08_tiled_two_stage": (
+        "config/train_flockdit_latent_multi_stream_twostage_tiled.yaml",
+        f"{RUN_ROOT}/exp08_tiled_two_stage-10621962_6",
+    ),
 }
 
 # The floor: an independent single-agent model, rolled out per-camera-agent on the
 # SAME episodes (in-distribution -- the "why not just run 10 single-agent models" bar).
+# exp04's stage-1 pretrain is the plain single-agent config (exp07's stage 1 adds
+# diffusion forcing, so it is NOT interchangeable here). Same config and same epoch 84
+# as the pre-re-run floor, so this column stays comparable to the 2026-07-29 table.
 FLOOR_CONFIG = "config/train_flockdit_latent_single_stream.yaml"
-FLOOR_OUTPUT_DIR = f"{RUN_ROOT}/exp04_two_stage-10290187_3/stage1"
+FLOOR_OUTPUT_DIR = f"{RUN_ROOT}/exp04_two_stage-10621962_3/stage1"
 
 TIER_A_KEYS = ["detection_rate", "position_error", "mean_detected_per_frame"]
 TIER_A_LABELS = {
@@ -92,7 +118,7 @@ CONSISTENCY_LABELS = {
 
 @torch.no_grad()
 def _all_metrics(lat, decode_fn, pos, cam_idx, n_cam):
-    # n_cam -> track-voted dart identities (VAE color-flash robustness); see
+    # n_cam -> track-voted boid identities (VAE color-flash robustness); see
     # pair_consistency.smooth_identities. Same default as eval_flock_multi.
     frames, dets, _ = _decode_detect(lat, decode_fn, n_cam=n_cam)
     cents = [[d["centroids"] for d in ag] for ag in dets]
@@ -104,14 +130,14 @@ def _all_metrics(lat, decode_fn, pos, cam_idx, n_cam):
 
 
 def _write_videos(name, out_dir, episodes, frames_per_episode, positions_per_episode,
-                   agent_indices, sim_fps, upscale):
+                   agent_indices, sim_fps, upscale, grid_cols):
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     for ep_id, frames_all, positions in zip(episodes, frames_per_episode, positions_per_episode):
         views = [
             ov.draw_gt_marks(ov.upscale(frames_all[j], upscale), positions, agent_indices[j] - 1)
             for j in range(len(frames_all))
         ]
-        write_mp4(ov.tile(views), str(out_dir / f"{name}_ep{ep_id}.mp4"), sim_fps)
+        write_mp4(ov.tile(views, cols=grid_cols), str(out_dir / f"{name}_ep{ep_id}.mp4"), sim_fps)
     print(f"  wrote {len(episodes)} video(s) -> {out_dir}")
 
 
@@ -129,6 +155,9 @@ def main():
                     help="how many of the --episodes to also render as overlay mp4s (0 disables).")
     ap.add_argument("--video-dir", default=f"{RUN_ROOT}/eval_videos")
     ap.add_argument("--upscale", type=int, default=2)
+    ap.add_argument("--grid-cols", type=int, default=5,
+                    help="columns in the tiled POV grid (10 agents -> 5 gives a clean 5x2; "
+                         "0 falls back to near-square packing, which leaves a 2-cell hole).")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -274,7 +303,7 @@ def main():
             positions = [episode_ctx[i][4] for i in range(n_vid)]
             agent_indices = episode_ctx[0][0]["agent_indices"]
             _write_videos(name, args.video_dir, episodes, column_frames[name], positions,
-                          agent_indices, int(args.sim_fps), int(args.upscale))
+                          agent_indices, int(args.sim_fps), int(args.upscale), int(args.grid_cols))
 
 
 if __name__ == "__main__":

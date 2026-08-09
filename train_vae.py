@@ -30,6 +30,14 @@ from modeling.utils.seed import seed_everything
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the Wan VAE on partial-agent observation videos.")
     parser.add_argument("--config", default=None, help="Path to YAML config; defaults to config/train_vae.yaml.")
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help="Path to a .ckpt to continue training from (restores weights, optimizer, LR schedule and "
+             "step/epoch counters). A checkpoint inside an existing run's checkpoints/ dir continues that "
+             "run in place; anything else starts a new run dir. Use model.pretrained_path instead to "
+             "warm-start weights only.",
+    )
     parser.add_argument("overrides", nargs="*", help="OmegaConf dotlist overrides, e.g. trainer.max_epochs=1.")
     return parser.parse_args()
 
@@ -42,12 +50,16 @@ def load_cfg(config_path: str | None, overrides: list[str]):
     return cfg
 
 
-def build_run_dir(cfg) -> Path:
+def build_run_dir(cfg, resume_ckpt: Path | None = None) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = Path(cfg.output_dir) / f"{stamp}_{cfg.experiment_name}"
+    # Resuming from a run's own checkpoints/ dir continues that run in place, so
+    # checkpoints and metrics stay together instead of scattering across run dirs.
+    continuing = resume_ckpt is not None and resume_ckpt.parent.name == "checkpoints"
+    run_dir = resume_ckpt.parent.parent if continuing else Path(cfg.output_dir) / f"{stamp}_{cfg.experiment_name}"
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
     (run_dir / "videos").mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, run_dir / "config.yaml")
+    # Keep the original run's config.yaml intact; record the resumed one alongside it.
+    OmegaConf.save(cfg, run_dir / (f"config_resumed_{stamp}.yaml" if continuing else "config.yaml"))
     return run_dir
 
 
@@ -219,6 +231,21 @@ def build_callbacks(cfg, run_dir: Path):
         ),
         LearningRateMonitor(logging_interval="step"),
     ]
+    # Milestone snapshots kept forever, independent of val/loss. The monitored
+    # callback above only ever holds the running top-k plus last.ckpt, so a long
+    # run that stops improving (or stops writing, as the gradient_stream run did
+    # after epoch 7644) leaves nothing recent to restart from.
+    periodic_every_n = int(cfg.checkpoint.get("periodic_every_n_epochs", 0) or 0)
+    if periodic_every_n > 0:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=str(run_dir / "checkpoints"),
+                every_n_epochs=periodic_every_n,
+                save_top_k=-1,
+                filename="snap-{epoch:05d}-{val/loss:.4f}",
+                auto_insert_metric_name=False,
+            )
+        )
     every_n = int(cfg.logger.get("log_video_every_n_steps", 0))
     if every_n > 0:
         callbacks.append(
@@ -259,14 +286,24 @@ def main():
 
     print(OmegaConf.to_yaml(cfg))
 
+    resume_ckpt = Path(args.resume).resolve() if args.resume else None
+    if resume_ckpt is not None and not resume_ckpt.is_file():
+        raise FileNotFoundError(f"--resume checkpoint not found: {resume_ckpt}")
+    if resume_ckpt is not None and cfg.model.get("pretrained_path", None):
+        # Lightning restores the checkpoint's weights over anything loaded at init.
+        print("[train_vae] --resume given: ignoring model.pretrained_path.")
+        cfg.model.pretrained_path = None
+
     datamodule = PartialVideoVAEDataModule(cfg)
     model = WanVAELightning(cfg)
 
     if bool(cfg.trainer.get("print_torchinfo", True)):
         _print_torchinfo(cfg, model)
 
-    run_dir = build_run_dir(cfg)
+    run_dir = build_run_dir(cfg, resume_ckpt)
     print(f"[train_vae] run dir: {run_dir}")
+    if resume_ckpt is not None:
+        print(f"[train_vae] resuming from: {resume_ckpt}")
     loggers = build_loggers(cfg, run_dir)
     callbacks = build_callbacks(cfg, run_dir)
 
@@ -286,7 +323,7 @@ def main():
         callbacks=callbacks,
     )
 
-    trainer.fit(model, datamodule=datamodule)
+    trainer.fit(model, datamodule=datamodule, ckpt_path=str(resume_ckpt) if resume_ckpt else None)
 
 
 if __name__ == "__main__":

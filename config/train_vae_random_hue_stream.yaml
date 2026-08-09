@@ -1,0 +1,93 @@
+seed: 42
+output_dir: output/train_vae           # run dir = {output_dir}/{YYYYMMDD-HHMMSS}_{experiment_name}
+experiment_name: wan_vae_random_hue_stream
+
+data:
+  root: null                  # unused: streaming generates clips from the sim.
+  val_fraction: 0.1
+  num_frames: 17              # Must be 1 + 4k for WanVAE chunking.
+  frame_stride: 1
+  image_size: [128, 128]
+  partial_agent_indices: null
+  overfit_n: null
+  streaming:
+    enabled: true
+    sim_config: config/data_recording.yaml
+    sim_overrides:            # every boid gets a random hue at fixed S=V=1, redrawn each
+      - rendering.color_mode=random_hue   # episode -> hue-invariant VAE, constant lightness.
+      - rendering.background_gradient=false   # black background.
+    num_partial_agents: 10
+    windows_per_episode: 6
+    warmup_steps: 60
+    clips_per_epoch: 4096     # 128 steps/epoch at batch_size 32 -> val + ckpt every 128 steps.
+    val_clips: 64             # fixed val hues (disjoint seed namespace) so val/loss is comparable.
+    threads_per_worker: 2
+
+dataloader:
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+
+model:
+  dim: 32
+  dec_dim: 32
+  z_dim: 8
+  dim_mult: [1, 2, 4, 4]
+  num_res_blocks: 2
+  attn_scales: []
+  temperal_downsample: [false, true, true]
+  dropout: 0.0
+  patch_size: 2
+  # From scratch by default: output/ is gitignored, so a fresh clone has no checkpoint.
+  # To warm-start instead (much faster — hue coverage is a shallow adaptation), copy
+  # vae-081-0.0042.ckpt over and add:
+  #   model.pretrained_path=<path/to/vae-081-0.0042.ckpt>
+  pretrained_path: null
+
+loss:
+  recon_loss: l1
+  kl_weight: 1.0e-6
+  logvar_clamp: [-30.0, 20.0]
+
+optim:
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 1.0e-6
+  scheduler: cosine
+  t_max: 1024000          # total steps = max_epochs * (clips_per_epoch / batch_size) = 8000 * 128.
+  eta_min: 1.0e-6
+
+trainer:
+  max_epochs: 8000        # from scratch needs longer than a warm start; ~13 days at the 145 s/epoch
+                          # measured on a 4090. Stop any time — best-5 + last + milestones are on disk.
+  accelerator: auto
+  devices: auto
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  log_every_n_steps: 20
+  val_check_interval: 1.0
+  limit_val_batches: 1.0
+  deterministic: false
+  summary_depth: 2
+  print_torchinfo: false
+  torchinfo_depth: 2
+
+checkpoint:
+  monitor: val/loss
+  mode: min
+  save_top_k: 5              # rolling best-5 by val/loss, re-evaluated every epoch.
+  save_last: true             # last.ckpt -> resume point for `--resume`.
+  every_n_epochs: 1
+  periodic_every_n_epochs: 200  # snap-*.ckpt milestones kept forever (~176 MB each).
+
+logger:
+  use_wandb: true
+  wandb_project: flockworld-vae
+  wandb_entity: null
+  log_video_every_n_steps: 800
+  log_video_to_wandb: true
+  video_fps: 8
+  video_codec: avc1

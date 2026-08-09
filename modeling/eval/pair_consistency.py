@@ -2,11 +2,11 @@
 
 Replaces the old Tier B (removed): NOTHING here touches ``gt_pos`` -- not the
 scoring coordinate frame, not event selection. The two camera agents localize
-**each other**. In the ``agent_id`` setup, camera agent ``k`` renders as a dart
-of hue ``k / n_cam`` (flock_env), so in agent a's egocentric view agent b shows
-up as a b-hued dart whose pixel gives b's world offset from a -- with zero ground
+**each other**. In the ``agent_id`` setup, camera agent ``k`` renders with hue
+``k / n_cam`` (flock_env), so in agent a's egocentric view agent b shows
+up b-hued, and that pixel gives b's world offset from a -- with zero ground
 truth. Covisibility is whatever the model renders: "A sees B" == A drew a B-hued
-dart. So this measures the model's INTERNAL coherence and is deliberately blind
+boid. So this measures the model's INTERNAL coherence and is deliberately blind
 to whether it rendered the sightings reality demanded (that is fidelity, Tier A).
 
 Because it is self-triggered, an agreement RATE is meaningless on its own -- a
@@ -15,21 +15,26 @@ VOLUME (``n_sightings``, ``sightings_per_frame``, ``n_reciprocal``); read the
 rates against those. A sparse model that renders nothing must not win.
 
 Geometry (gt_project): an agent-centered ``size`` px crop, 1:1 scale, no
-rotation, so a dart at pixel ``p`` implies world offset ``p - HALF`` from that
-agent. Identity inversion: ``round(hue * n_cam) % n_cam`` recovers the boid index
-(hue == index / n_cam at generation), with a half-slot tolerance so a wrong-hue
-dart is rejected rather than misassigned (achromatic darts read as white = NaN).
+rotation, so a detection at pixel ``p`` implies world offset ``p - HALF`` from
+that agent. Identity inversion: ``round(hue * n_cam) % n_cam`` recovers the boid
+index (hue == index / n_cam at generation), with a half-slot tolerance so a
+wrong-hue detection is rejected rather than misassigned (achromatic boids read as
+white = NaN).
 
 TEMPORAL IDENTITY SMOOTHING (``smooth_identities``, on by default in the eval
-drivers): the VAE decoder flashes a dart's color for stretches of frames, so a
-per-frame hue read mislabels it while the flash lasts -- the sighting is dropped
-or the dart falls into the white (third-party) pool, and every rate above moves
-for a reason that has nothing to do with the model's spatial coherence. A boid
-does not change identity mid-flight, so identity is voted along a track instead
-of read per frame: link detections frame-to-frame by position, then give the
-whole track one label (or a rolling window vote). This only RELABELS darts the
-model actually drew -- it never invents a detection -- so the volume counts stay
-honest and the metric stays self-triggered.
+drivers): the VAE decoder flashes a boid's color for stretches of frames, so a
+per-frame hue read mislabels it while the flash lasts -- the sighting is dropped,
+or the boid falls into the white (third-party) pool, and every rate above moves
+for a reason that has nothing to do with the model's spatial coherence
+(``diagnose_identity.py`` measures that instability per frame; this fixes it). A
+boid does not change identity mid-flight, so identity is voted along a track
+instead of read per frame: link detections frame-to-frame by position, then give
+the whole track one label (or a rolling-window vote). This only RELABELS boids
+the model actually drew -- it never invents a detection -- so the volume counts
+the rates are read against stay honest, and the metric stays self-triggered.
+``heading_consistency`` solves the harder no-color version of this problem by
+inferring identity from heading traces; here the color IS the identity channel
+and only its temporal stability is at issue.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from scipy.optimize import linear_sum_assignment
 from modeling.eval import gt_project as gp
 
 HALF = gp.PARTIAL_SIZE // 2
-FOCAL_EXCLUDE_PX = 8.0  # the view owner's own dart sits at crop center every frame; its
+FOCAL_EXCLUDE_PX = 8.0  # the view owner itself sits at crop center every frame; its
                         # hue-drift tail otherwise yields one-sided phantom sightings
 
 
@@ -49,10 +54,11 @@ def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
 
     Assign to the nearest palette slot but REJECT (-1) when the circular hue error
     exceeds ``tol / n_cam``. ``tol`` MUST be < 0.5 to reject anything: rounding already
-    puts every dart within half a slot of its nearest identity, so ``tol=0.5`` (the old
-    default) accepted everything -- forcing noisy off-center darts onto the wrong
-    neighbour and inflating sightings with false positives. ``tol~0.25`` drops darts
-    more than a quarter-slot from a palette hue (i.e. near an identity boundary).
+    puts every detection within half a slot of its nearest identity, so ``tol=0.5``
+    (the old default) accepted everything -- forcing noisy off-center detections onto
+    the wrong neighbour and inflating sightings with false positives. ``tol~0.25``
+    drops detections more than a quarter-slot from a palette hue (i.e. near an
+    identity boundary).
     """
     hue = np.asarray(hue, np.float32)
     ident = np.full(len(hue), -1, np.int64)
@@ -68,8 +74,9 @@ def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 # Temporal identity smoothing (VAE color-flash robustness)
 # --------------------------------------------------------------------------- #
-IDENT_WHITE = -2      # achromatic dart -> a third-party (non-camera) boid
+IDENT_WHITE = -2      # achromatic -> a third-party (non-camera) boid
 IDENT_UNKNOWN = -1    # chromatic but off-palette -> no identity claimed
+                      # (the same three buckets diagnose_identity.py reports)
 
 
 def _frame_labels(view: dict, n_cam: int, tol: float) -> np.ndarray:
@@ -85,14 +92,19 @@ def _link_tracks(view_dets, max_link: float = 8.0, amb: float = 0.7):
 
     Optimal assignment on consecutive-frame centroid distance. A link is kept only
     if it is both close (``<= max_link`` px) and unambiguous (best distance
-    ``<= amb *`` second-best for that dart, same stage-3 rule as
+    ``<= amb *`` second-best for that boid, same stage-3 rule as
     ``match_cross_view``). Anything else BREAKS the track -- a broken track just
     means less smoothing (it degrades toward per-frame behavior), whereas a wrong
     link would hand one boid's color vote to another.
 
     ``max_link`` defaults to 8 px = the worst-case per-frame relative motion in the
     crop: boids cap at 4 px/tick (``config/data_recording.yaml``) and the crop
-    itself rides the camera agent, so dart-vs-crop motion is bounded by 2x that.
+    itself rides the camera agent, so boid-vs-crop motion is bounded by 2x that.
+
+    Separate from ``heading_consistency.link_tracks``, which serves the no-color
+    setup: that one drops the focal boid, carries headings, and returns positions.
+    This one keeps every detection and returns ``(frame, index)`` pairs, because
+    the caller has to write a label back onto the exact detection it came from.
     """
     tracks: list[list[tuple[int, int]]] = []
     ids = [np.full(len(np.asarray(d["centroids"], np.float32)), -1, np.int64) for d in view_dets]
@@ -134,7 +146,7 @@ def _vote(labels) -> int:
 
 def smooth_identities(dets, n_cam: int, window: int = 0, max_link: float = 8.0,
                       id_tol: float = 0.25, amb: float = 0.7):
-    """Vote each dart's color identity along its track instead of reading it per frame.
+    """Vote each boid's color identity along its track instead of reading it per frame.
 
     Args:
         dets:    ``dets[a][t]`` -> detect_boids dict, as passed to ``pair_consistency``.
@@ -180,15 +192,15 @@ def smooth_identities(dets, n_cam: int, window: int = 0, max_link: float = 8.0,
 
 
 def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
-    """Pixel ``(u, v)`` of the dart identified as ``target`` in ``view``, or None.
+    """Pixel ``(u, v)`` of the detection identified as ``target`` in ``view``, or None.
 
     On multiple candidates picks the one whose hue is closest to the exact
     expected ``target / n_cam``. (No hue-error is returned: it would only ever
-    reflect darts already accepted as the right color, so it cannot measure
+    reflect detections already accepted as the right color, so it cannot measure
     identity stability -- a color flip shows up as a missed/mismatched sighting.)
 
-    Darts within ``FOCAL_EXCLUDE_PX`` of crop center are ignored: that is the
-    view owner's own dart, never a valid sighting of another agent (its hue-drift
+    Detections within ``FOCAL_EXCLUDE_PX`` of crop center are ignored: that is the
+    view owner itself, never a valid sighting of another agent (its hue-drift
     tail was ~30% of ceiling sightings, all one-sided phantoms).
 
     Identity comes from ``view['ident']`` when ``smooth_identities`` has run
@@ -214,12 +226,16 @@ def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
 
 
 def _whites(view: dict) -> np.ndarray:
-    """White (achromatic) dart centroids (M,2) -- the third-party boids.
+<<<<<<< HEAD
+    """White (achromatic) centroids (M,2) -- the third-party boids.
 
     Uses the track-voted ``ident`` when smoothing has run, so a white boid that
     flashes colored (or a camera agent that flashes white) does not jump between
     the sighting pool and the third-party pool mid-flight.
     """
+=======
+    """White (achromatic, NaN-hue) centroids (M,2) -- the third-party boids."""
+>>>>>>> origin/main
     cents = np.asarray(view["centroids"], np.float32)
     if len(cents) == 0:
         return cents

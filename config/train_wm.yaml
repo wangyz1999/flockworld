@@ -4,7 +4,7 @@ output_dir: output/modeling
 experiment_name: flock_action_video_baseline
 
 data:
-  root: data/recording/20260525_122419
+  root: data/recording/20260623_135735   # 10k-episode set; the May recording is long gone
   split: train
   val_fraction: 0.1
   num_context_frames: 4

@@ -1,15 +1,15 @@
-"""Diagnose boid-dart vs wall-border blob shapes on GT-decoded frames (repo root).
+"""Diagnose boid vs wall-border detection shapes on GT-decoded frames (repo root).
 
 The detector currently grabs the white world border as a "boid". Boids are small
 compact dots; the border is a thin straight LINE (elongated, large bbox extent).
-This measures, for every detected blob, its size / bbox-extent / elongation, and
+This measures, for every detection, its size / bbox-extent / elongation, and
 labels it:
-  matched   = within 6px of a GT-visible boid  -> a real dart,
+  matched   = within 6px of a GT-visible boid  -> a real boid,
   unmatched = not near any GT boid             -> likely the border (or spurious).
 Prints both distributions + an extent-threshold sweep so we set the wall cutoff
 from data (keep ~all boids, drop ~all walls). No model needed -- GT frames only.
 
-    uv run python diag_blob_shapes.py
+    uv run python diag_boid_shapes.py
 """
 import numpy as np, torch
 from pathlib import Path
@@ -24,8 +24,8 @@ OUTD = "output/flock_dit_multi_10kep_nocolor_nobg"
 NEP, NLAT, MATCH = 3, 12, 6.0            # episodes, latent frames to decode/agent, GT match radius (px)
 V_THRESH, MIN_SIZE, NUM_BOIDS = 0.25, 2, 100
 MAX_ELONG, MAX_EXTENT = 5.0, 40          # mirror detect_boids: reject border lines/corners
-BORDER_PX, BORDER_MIN_SIZE = 5, 25       # mirror detect_boids: reject small blobs hugging the frame edge
-EDGE = 6                                 # a residual blob within EDGE px of the frame border = wall-like
+BORDER_PX, BORDER_MIN_SIZE = 5, 25       # mirror detect_boids: reject small detections hugging the frame edge
+EDGE = 6                                 # a residual detection within EDGE px of the frame border = wall-like
 
 cfg = load_cfg("config/train_flockdit_latent_multi.yaml", [f"data.root={ROOT}", f"output_dir={OUTD}"])
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -36,8 +36,8 @@ ds = FlockingLatentMultiDataset(
     random_clip=False, num_agents=int(cfg.data.num_agents))
 
 
-def blobs(frame_rgb):
-    """-> list of (size, extent, elong, u, v) for each blob passing the min-size filter."""
+def detections(frame_rgb):
+    """-> list of (size, extent, elong, u, v) for each detection passing the min-size filter."""
     f = np.asarray(frame_rgb, np.float32); f = f / 255.0 if f.max() > 1.5 else f
     V = f.max(-1)
     lbl, n = ndimage.label(V > V_THRESH)
@@ -74,7 +74,7 @@ with torch.no_grad():
                 n_frames += 1
                 _, gpx = gp.visible_boids(pos[t], cam)
                 gpx = np.asarray(gpx, np.float32).reshape(-1, 2)
-                for size, extent, elong, u, v in blobs(frames[t]):
+                for size, extent, elong, u, v in detections(frames[t]):
                     near = len(gpx) and np.min(np.linalg.norm(gpx - np.array([u, v]), axis=1)) <= MATCH
                     (matched if near else unmatched).append((size, extent, elong, u, v))
         print(f"ep{ep['episode_id']}: matched {len(matched)} unmatched {len(unmatched)} (cumulative)", flush=True)
@@ -90,14 +90,14 @@ def stats(name, arr):
 
 
 M, U = np.asarray(matched, np.float32), np.asarray(unmatched, np.float32)
-print(f"\n=== POST-FILTER blob shapes (matched={len(M)} real darts | unmatched={len(U)} residual) ===")
+print(f"\n=== POST-FILTER detection shapes (matched={len(M)} real boids | unmatched={len(U)} residual) ===")
 stats("matched", M); stats("unmatched", U)
 
-# Chase the residual over-detection: what ARE the surviving unmatched blobs?
+# Chase the residual over-detection: what ARE the surviving unmatched detections?
 if len(U):
     u, v = U[:, 3], U[:, 4]
     edge = (u < EDGE) | (u > 128 - EDGE) | (v < EDGE) | (v > 128 - EDGE)   # border-hugging => wall-like
-    print(f"\n=== residual unmatched analysis ({len(U)} blobs) ===")
+    print(f"\n=== residual unmatched analysis ({len(U)} detections) ===")
     print(f"  near frame border (<{EDGE}px, wall-like): {edge.mean():.2f}")
     print(f"  interior (split/genuine boid):            {1 - edge.mean():.2f}")
     print(f"  of border-hugging: median elong {np.median(U[edge, 2]) if edge.any() else float('nan'):.1f}, "

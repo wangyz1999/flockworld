@@ -8,6 +8,19 @@ from omegaconf import OmegaConf
 from modeling.models.wan_vae import WanVAE_, patchify, unpatchify
 
 
+def _load_vae_state_dict(path: str) -> dict[str, torch.Tensor]:
+    """Read weights for ``WanVAE_`` from either a bare Wan ``.pt`` state dict or a
+    Lightning ``.ckpt`` produced by this trainer (whose keys carry a ``vae.``
+    prefix and which also holds optimizer/loop state)."""
+    obj = torch.load(path, map_location="cpu", weights_only=False)
+    state = obj.get("state_dict", obj) if isinstance(obj, dict) else obj
+    return {
+        (k[len("vae."):] if k.startswith("vae.") else k): v
+        for k, v in state.items()
+        if isinstance(v, torch.Tensor)
+    }
+
+
 class WanVAELightning(L.LightningModule):
     """Lightning wrapper around the Wan VAE for from-scratch / fine-tune training.
 
@@ -40,9 +53,17 @@ class WanVAELightning(L.LightningModule):
         )
 
         if cfg.model.pretrained_path:
-            state = torch.load(cfg.model.pretrained_path, map_location="cpu")
+            state = _load_vae_state_dict(str(cfg.model.pretrained_path))
             missing, unexpected = self.vae.load_state_dict(state, strict=False)
-            print(f"[WanVAELightning] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
+            print(
+                f"[WanVAELightning] loaded pretrained {cfg.model.pretrained_path}: "
+                f"{len(state)} tensors, missing={len(missing)} unexpected={len(unexpected)}"
+            )
+            if missing:
+                raise RuntimeError(
+                    f"pretrained_path did not cover {len(missing)} VAE params "
+                    f"(first: {missing[:3]}) — arch mismatch, warm start would be a no-op."
+                )
 
     def _encode(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # Mirrors WanVAE_.encode chunking (1 + 4k frames) but returns log_var

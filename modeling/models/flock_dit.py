@@ -4,8 +4,9 @@ A faithful PyTorch reduction of the Solaris single-/multi-player world model
 (JAX/Flax-nnx, ``solaris/src/models/{singleplayer,multiplayer}/world_model.py``),
 adapted for boids:
 
-* operates in **pixel space** (no VAE) but is channel/patch/resolution agnostic
-  so swapping to VAE latents later is a config-only change;
+* operates in the **latent space** of a frozen video VAE (see ``frozen_vae.py``);
+  channel/patch/resolution agnostic, so pixel space is still a config-only change
+  and the earliest experiments ran that way;
 * **no CLIP** -- the I2V cross-attention is removed;
 * conditioned on **2D steering acceleration** ``(acc_x, acc_y)`` injected via
   adaLN modulation (replacing Solaris's mouse/keyboard action module);
@@ -148,8 +149,15 @@ class SelfAttention(nn.Module):
         self.norm_q = RMSNorm(dim, eps) if qk_norm else nn.Identity()
         self.norm_k = RMSNorm(dim, eps) if qk_norm else nn.Identity()
 
-    def forward(self, x, freqs_cis, attn_mask, f, p, s):
-        """x: (B, F*P*S, dim). RoPE applied per-agent on the (F,S) grid."""
+    def forward(self, x, freqs_cis, attn_mask, f, p, s, return_attn: bool = False):
+        """x: (B, F*P*S, dim). RoPE applied per-agent on the (F,S) grid.
+
+        ``return_attn``: analysis-only path -- recomputes attention via an explicit
+        QK^T/softmax (instead of the fused ``scaled_dot_product_attention`` kernel,
+        which never materializes attention weights) and also returns them,
+        ``(B, num_heads, L, L)``. Numerically equivalent, just slower; unused by
+        default so training/normal inference keep the fused kernel.
+        """
         n = self.num_heads
         b = x.shape[0]
         q = rearrange(self.norm_q(self.q(x)), "b l (n d) -> b l n d", n=n)
@@ -168,9 +176,18 @@ class SelfAttention(nn.Module):
         else:
             q, k = rope(q), rope(k)
         q, k, v = (t.transpose(1, 2) for t in (q, k, v))  # (B, N, L, D)
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        attn = None
+        if return_attn:
+            scale = 1.0 / math.sqrt(q.shape[-1])
+            logits = (q @ k.transpose(-2, -1)) * scale
+            logits = logits.masked_fill(~attn_mask, float("-inf"))
+            attn = logits.softmax(dim=-1)
+            out = attn @ v
+        else:
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         out = rearrange(out.transpose(1, 2), "b l n d -> b l (n d)")
-        return self.o(out)
+        out = self.o(out)
+        return (out, attn) if return_attn else out
 
 
 # --------------------------------------------------------------------------- #
@@ -186,7 +203,7 @@ class DiTBlock(nn.Module):
         # 6 adaLN-zero modulation params, init / sqrt(dim) (Solaris convention)
         self.modulation = nn.Parameter(torch.randn(1, 1, 1, 6, dim) / math.sqrt(dim))
 
-    def forward(self, x, e, freqs_cis, attn_mask):
+    def forward(self, x, e, freqs_cis, attn_mask, return_attn: bool = False):
         """x: (B, F, P, S, dim); e: (B, F, P, 6, dim) timestep+action modulation."""
         f, p, s = x.shape[1], x.shape[2], x.shape[3]
         m = (self.modulation + e).unsqueeze(4).chunk(6, dim=3)  # 6 x (B,F,P,1,1,dim)
@@ -196,12 +213,13 @@ class DiTBlock(nn.Module):
         unpack = lambda t: rearrange(t, "b (f p s) c -> b f p s c", f=f, p=p, s=s)
 
         h = self.norm1(x) * (1 + m[1]) + m[0]
-        y = unpack(self.self_attn(pack(h), freqs_cis, attn_mask, f, p, s))
-        x = x + y * m[2]
+        attn_out = self.self_attn(pack(h), freqs_cis, attn_mask, f, p, s, return_attn=return_attn)
+        y, attn = attn_out if return_attn else (attn_out, None)
+        x = x + unpack(y) * m[2]
 
         h = self.norm2(x) * (1 + m[4]) + m[3]
         x = x + self.ffn(h) * m[5]
-        return x
+        return (x, attn) if return_attn else x
 
 
 class OutputHead(nn.Module):
@@ -340,7 +358,7 @@ class FlockDiT(nn.Module):
         e_bd = rearrange(e.reshape(b, p, f, self.dim), "b p f c -> b f p c")
         return e0, e_bd
 
-    def forward(self, x, t, actions):
+    def forward(self, x, t, actions, return_attn: bool = False):
         single = x.dim() == 5
         if single:  # add a singleton player axis
             x = x.unsqueeze(1)
@@ -373,12 +391,16 @@ class FlockDiT(nn.Module):
             freqs = self.rope.grid_freqs(fp, hp, wp).to(tok.device)  # (F*S, hd//2)
         mask = self._block_causal_mask(fp, p * s, x.device)
 
+        attn_maps = [] if return_attn else None
         for block in self.blocks:
             if agent_bias is not None and self.agent_embed_per_layer:
                 tok = tok + agent_bias      # per-layer identity re-injection (opt-in)
-            if self.grad_checkpointing and self.training:
+            if self.grad_checkpointing and self.training and not return_attn:
                 # recompute block activations in backward -> less memory, ~1.3x compute
                 tok = checkpoint(block, tok, e0, freqs, mask, use_reentrant=False)
+            elif return_attn:
+                tok, attn = block(tok, e0, freqs, mask, return_attn=True)
+                attn_maps.append(attn)  # (B, num_heads, F*P*S, F*P*S)
             else:
                 tok = block(tok, e0, freqs, mask)
         out = self.head(tok, e_bd)  # (B, F, P, S, patch_prod*out_c)
@@ -388,4 +410,5 @@ class FlockDiT(nn.Module):
             "b f p (hh ww) (p1 p2 p3 c) -> b p (f p1) c (hh p2) (ww p3)",
             hh=hp, ww=wp, p1=pt, p2=ph, p3=pw, c=self.out_channels,
         )
-        return out.squeeze(1) if single else out
+        out = out.squeeze(1) if single else out
+        return (out, attn_maps) if return_attn else out

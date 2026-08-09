@@ -1,25 +1,25 @@
-"""Visualize the boid detector on GENERATED frames (run from repo root).
+"""10s rollouts of the tiled multi model, single-agent style (run from repo root).
 
-Per agent: the model's GENERATED view with a green ring on every detection
-(exactly what ``detect_boids`` found). One mp4 per agent, no GT half.
+For each agent: GT reconstruction (top) over the model's prediction (bottom),
+one video per agent. No grid, no overlay -- just the prediction behavior.
 
-    uv run python gen_detect_viz.py
+    uv run python gen_multi_tiled_10s_rollout.py
 """
-import os, torch, numpy as np
+import os, torch
 from pathlib import Path
 from modeling.configs import load_cfg
 from train_flock_dit import build_decode_fn
 from eval_flock_dit import find_best_checkpoint, build_model, write_mp4
 from modeling.data.flocking_latent_dataset import FlockingLatentMultiDataset
 from modeling import flow_matching as fm
-from modeling.eval import overlay as ov
-from modeling.eval.boid_detect import detect_boids
 
-ROOT = "data/recording/20260623_135735"
-OUTD = "output/flock_dit_multi_10kep_nocolor_nobg"
-NLAT, NEP, STEPS, UP = 38, 1, 50, 4     # ~5s, 1 episode x all 10 agents, 4x upscale
+ROOT = "data/recording/20260702160453"
+OUTD = "output/flock_dit_multi_tiled"
+NLAT, NEP, STEPS = 75, 2, 50          # 75 latent ~= 10s; 2 episodes x all 10 agents
 
-cfg = load_cfg("config/train_flockdit_latent_multi.yaml", [f"data.root={ROOT}", f"output_dir={OUTD}"])
+cfg = load_cfg("config/train_flockdit_latent_multi_stream_tiled.yaml", [
+    "data.streaming.enabled=false", f"data.root={ROOT}", "data.val_fraction=0.1", f"output_dir={OUTD}",
+])
 device = "cuda" if torch.cuda.is_available() else "cpu"
 decode_fn = build_decode_fn(cfg)
 ck, val = find_best_checkpoint(Path(OUTD) / "checkpoints"); print(f"ckpt {ck} val {val:.4f}", flush=True)
@@ -31,15 +31,12 @@ ds = FlockingLatentMultiDataset(
     num_context_frames=cfg.data.num_context_frames, num_future_frames=cfg.data.num_future_frames,
     random_clip=False, num_agents=int(cfg.data.num_agents))
 
-out = f"{OUTD}/eval/detect_viz"; os.makedirs(out, exist_ok=True)
+out = f"{OUTD}/eval/10s_rollout"; os.makedirs(out, exist_ok=True)
 wf = int(cfg.data.num_future_frames)
 
-
-def viz(lat):                    # (T,z,h,w) latents -> (T,H,W,3) uint8 generated frames + green detection rings
-    frames = ov.to_uint8(decode_fn(lat).detach().cpu())          # (T, 128, 128, 3) RGB
-    dets = [detect_boids(frames[t])["centroids"] for t in range(len(frames))]
-    return ov.draw_detections(ov.upscale(frames, UP), dets, radius=6, color=(0, 255, 0)), dets
-
+def gt_over_pred(gt, pred):           # each (T,3,H,W) in [-1,1] -> (T, 2H, W, 3) uint8 RGB
+    vid = torch.cat([gt, pred], dim=2).clamp(-1, 1)
+    return ((vid + 1) / 2 * 255).round().to(torch.uint8).permute(0, 2, 3, 1).contiguous().cpu().numpy()
 
 with torch.no_grad():
     for e in range(min(NEP, len(ds.episodes))):
@@ -50,8 +47,9 @@ with torch.no_grad():
         clip = fm.multi_autoregressive_rollout(model, frames[:, :, :ctx], actions, ntot,
                                                window_future=wf, num_steps=STEPS)
         for j in range(clip.shape[1]):
-            v, d = viz(clip[0, j])
-            write_mp4(v, f"{out}/ep{ep['episode_id']}_a{ep['agent_indices'][j]}_detect.mp4", 30)
-            print(f"  a{ep['agent_indices'][j]}: generated {np.mean([len(x) for x in d]):.2f}/f detected", flush=True)
+            gt = decode_fn(ep["frames"][j, :ntot])
+            pred = decode_fn(clip[0, j])
+            write_mp4(gt_over_pred(gt, pred),
+                      f"{out}/ep{ep['episode_id']}_a{ep['agent_indices'][j]}_10s.mp4", 30)
         print(f"wrote ep{ep['episode_id']} ({clip.shape[1]} agents)", flush=True)
 print("DONE ->", out, flush=True)

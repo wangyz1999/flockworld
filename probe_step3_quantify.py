@@ -81,7 +81,7 @@ def score_pair(fa, fb, acc):
         wa_o, wb_o = wa[cs._in_crop(wa, pb)], wb[cs._in_crop(wb, pa)]            # overlap region
         pairs, _ = cs.match_cross_view(wa_o, wb_o, MATCH)
         acc["nm"] += len(pairs); acc["no"] += max(len(wa_o), len(wb_o))
-        # CHANCE floor: A's real darts vs RANDOM B content (same count, same geometry pb)
+        # CHANCE floor: A's real boids vs RANDOM B content (same count, same geometry pb)
         db_rand = rng.uniform(0, 128, size=db.shape).astype(np.float32) if len(db) else db
         wb_ro = cs.implied_world(db_rand, pb)[cs._in_crop(cs.implied_world(db_rand, pb), pa)]
         pairs_n, _ = cs.match_cross_view(wa_o, wb_ro, MATCH)
