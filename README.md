@@ -488,7 +488,10 @@ exists.
 ## Acknowledgments
 
 This project builds on four pieces of prior work. Each section below states
-exactly what was adapted and where it lives in this repository.
+exactly what was adapted and where it lives in this repository. Where code was
+reused, [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records the
+attribution file by file, with the upstream license texts in
+[`licenses/`](licenses/).
 
 ### Flocking simulation — [cubedhuang/boids](https://github.com/cubeDhuang/boids)
 
@@ -540,7 +543,8 @@ reproduces our non-MIRA baseline:
 The action-combination scheme — a learned per-agent tag added to each encoded
 action before pooling — also follows MIRA.
 
-> Apache License 2.0
+Each mechanism is reimplemented against this project's own architecture from
+the paper's description; no MIRA source code is used here.
 
 ### Video autoencoder — [Wan 2.2](https://github.com/Wan-Video/Wan2.2)
 

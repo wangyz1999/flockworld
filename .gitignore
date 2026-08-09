@@ -212,6 +212,9 @@ __marimo__/
 /pretrained/
 /wandb/
 
+# Local clones of upstream projects, kept for reference only
+/refs/
+
 # SLURM run artifacts: per-run checkpoint dirs, eval videos and logs (~GBs)
 /flockdit_streaming_20260715/
 

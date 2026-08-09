@@ -1,3 +1,7 @@
+# ``_hsv_to_rgb`` follows the color mapping of cubeDhuang/boids
+# (https://github.com/cubeDhuang/boids), MIT License, Copyright (c) 2023 Daniel
+# Huang, vectorized here for JAX. See licenses/MIT-cubedhuang-boids.txt and
+# THIRD_PARTY_NOTICES.md.
 """Compose full-frame images from boid arrays using JAX renderers."""
 
 from functools import partial

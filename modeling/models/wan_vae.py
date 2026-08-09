@@ -1,4 +1,9 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
+# This file has been modified from the original Wan 2.2 release
+# (https://github.com/Wan-Video/Wan2.2): it is reduced to the encoder/decoder
+# and the Wan2_2_VAE wrapper used by this project. See THIRD_PARTY_NOTICES.md.
 import logging
 
 import torch

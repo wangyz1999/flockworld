@@ -1,3 +1,7 @@
+# Portions of this file are derived from Solaris
+# (https://github.com/solaris-wm/solaris), licensed under the Apache License,
+# Version 2.0. See licenses/Apache-2.0.txt. This file has been modified; the
+# changes are described in THIRD_PARTY_NOTICES.md.
 """Flow-matching (rectified-flow) objective and sampler for FlockDiT.
 
 Faithful to Solaris (``solaris/src/runners/trainer_sp.py``):

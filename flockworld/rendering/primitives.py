@@ -1,3 +1,7 @@
+# ``sd_js_boid_batch`` uses the five-point boid geometry of cubeDhuang/boids
+# (https://github.com/cubeDhuang/boids), MIT License, Copyright (c) 2023 Daniel
+# Huang, reimplemented here as a JAX signed-distance function. See
+# licenses/MIT-cubedhuang-boids.txt and THIRD_PARTY_NOTICES.md.
 """Low-level SDF and math primitives for JAX rendering."""
 
 import jax.numpy as jnp

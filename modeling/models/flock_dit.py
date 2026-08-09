@@ -1,3 +1,7 @@
+# Portions of this file are derived from Solaris
+# (https://github.com/solaris-wm/solaris), licensed under the Apache License,
+# Version 2.0. See licenses/Apache-2.0.txt. This file has been modified; the
+# changes are described in THIRD_PARTY_NOTICES.md and in the docstring below.
 """FlockDiT: a flow-matching DiT world model for FlockWorld boids.
 
 A faithful PyTorch reduction of the Solaris single-/multi-player world model

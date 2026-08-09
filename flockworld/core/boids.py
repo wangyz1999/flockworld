@@ -1,3 +1,8 @@
+# Derived from cubeDhuang/boids (https://github.com/cubeDhuang/boids),
+# MIT License, Copyright (c) 2023 Daniel Huang. See
+# licenses/MIT-cubedhuang-boids.txt. This file has been modified: the algorithm
+# is reimplemented in JAX as a batched update and the arena reflects at the
+# walls instead of wrapping. See THIRD_PARTY_NOTICES.md.
 """Boid flocking physics implemented in pure JAX.
 
 Faithfully reproduces the algorithm from the JS/PixiJS reference:
