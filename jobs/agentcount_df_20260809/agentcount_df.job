@@ -1,0 +1,168 @@
+#!/bin/bash
+#SBATCH --account=ustun_1726
+#SBATCH --partition=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=26
+#SBATCH --constraint=a40|a100
+#SBATCH --gres=gpu:1
+#SBATCH --mem=90G
+#SBATCH --time=48:00:00
+#SBATCH --array=0-6
+#SBATCH --job-name=flockdit-agentcount-df
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
+#SBATCH --signal=TERM@600
+
+# Agent-count scaling sweep with DIFFUSION FORCING, one encoder group per
+# submission. Array layout (7 tasks):
+#   0-5 -> multi-agent, num_agents = 2, 5, 8, 10, 20, 30
+#     6 -> single-agent floor (num_agents=1, rolled out per camera agent at eval)
+#
+# The group is chosen by $AGENTCOUNT_GROUP, which fixes the encoder and the
+# background condition. See jobs/agentcount_df_20260809/submit_all.sh.
+#
+# Differences from jobs/agentcount_20260804/agentcount.job (backbone was
+# exp01_baseline: interleaved views, teacher forcing, P=10-pinned encoder):
+#   * config -> ..._df.yaml (exp03): train.diffusion_forcing=true. Every frame is
+#     noised with its own timestep including context, and the loss covers all
+#     frames. Views stay interleaved (no tiled_rope); inference is unchanged.
+#   * the floor gets train.diffusion_forcing=true too, so the floor comparison
+#     isolates cross-attention rather than cross-attention + DF. Same form as
+#     exp07's stage 1 (flockdit_streaming.job:143-149).
+#   * the encoder is per-group, never inherited from config/slurm_paths.conf.
+#
+# diffusion_forcing is read only by modeling/training/flow_trainer.py:248, never
+# by build_model, and only shared_timesteps is gated on `multi` -- so DF applies
+# identically at P=1 and the architecture is unchanged. Eval needs no matching
+# flag, only the matching --config for provenance.
+
+set -uo pipefail
+
+PATH_CONFIG="${FLOCKWORLD_PATH_CONFIG:-${SLURM_SUBMIT_DIR}/config/slurm_paths.conf}"
+source "$PATH_CONFIG"
+
+PROJECT_SRC="$FLOCKWORLD_CODE_DIR"
+cd "$PROJECT_SRC"
+
+export PYTHONUNBUFFERED=1
+
+GROUP="${AGENTCOUNT_GROUP:?set AGENTCOUNT_GROUP to color_agent | color_bg | random_hue}"
+
+# Encoder + background per group. Rendering stays color_mode=agent_id in ALL
+# three groups, including random_hue: every cross-view metric in
+# modeling/eval/pair_consistency.py inverts identity via round(hue * n_cam),
+# which only holds for the agent_id palette. random_hue is the *encoder*
+# condition (hue-invariant, so in-distribution at every N), not the renderer's.
+case "$GROUP" in
+  color_agent)
+    VAE_CHECKPOINT="$FLOCKWORLD_STORAGE_DIR/pretrained/color_agent_stream/vae-1976-0.0018.ckpt"
+    BACKGROUND_GRADIENT=false
+    ;;
+  color_bg)
+    VAE_CHECKPOINT="$FLOCKWORLD_STORAGE_DIR/pretrained/color_bg_stream/vae-6928-0.0034.ckpt"
+    BACKGROUND_GRADIENT=true
+    ;;
+  random_hue)
+    VAE_CHECKPOINT="$FLOCKWORLD_STORAGE_DIR/pretrained/random_hue_stream/vae-2433-0.0015.ckpt"
+    BACKGROUND_GRADIENT=false
+    ;;
+  *)
+    echo "Unknown AGENTCOUNT_GROUP=$GROUP (want color_agent | color_bg | random_hue)" >&2
+    exit 2
+    ;;
+esac
+
+COMMON_OVERRIDES=(
+  data.streaming.clips_per_epoch=20000
+  train.epochs=-1
+  train.save_every=2
+  train.diffusion_forcing=true
+  # 25k grid + keep-all: every N lands on the same step checkpoints, so the sweep
+  # can be read at a common step count. The trainer has no max-steps stop, and
+  # equal wall-clock is not equal compute here -- interleaved attention is
+  # quadratic in P, so the Aug 4 sweep bought 347 epochs at N=2 and 18 at N=30.
+  train.save_every_steps=25000
+  train.keep_step_checkpoints=0
+  "vae.checkpoint_path=$VAE_CHECKPOINT"
+)
+
+run_training() {
+  local duration="$1"
+  shift
+  echo "[$(date --iso-8601=seconds)] starting: $*"
+  timeout --signal=TERM --kill-after=5m --preserve-status "$duration" "$@"
+  local status=$?
+  echo "[$(date --iso-8601=seconds)] finished with status $status"
+  return "$status"
+}
+
+AGENT_COUNTS=(2 5 8 10 20 30)
+FLOOR_INDEX=${#AGENT_COUNTS[@]}          # 6
+
+if (( SLURM_ARRAY_TASK_ID < 0 || SLURM_ARRAY_TASK_ID > FLOOR_INDEX )); then
+  echo "Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID" >&2
+  exit 2
+fi
+
+if (( SLURM_ARRAY_TASK_ID == FLOOR_INDEX )); then
+  IS_FLOOR=1
+  RUN_KEY="floor"
+else
+  IS_FLOOR=0
+  NUM_AGENTS="${AGENT_COUNTS[$SLURM_ARRAY_TASK_ID]}"
+  RUN_KEY="$(printf 'agents%02d' "$NUM_AGENTS")"
+fi
+
+RUN_ID="${GROUP}-${RUN_KEY}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RUN_DIR="$FLOCKWORLD_STORAGE_DIR/output/agentcount_df_20260809/$GROUP/$RUN_ID"
+mkdir -p "$RUN_DIR/logs" "$RUN_DIR/wandb"
+export WANDB_DIR="$RUN_DIR/wandb"
+exec > >(tee -a "$RUN_DIR/logs/stdout.log") \
+  2> >(tee -a "$RUN_DIR/logs/stderr.log" >&2)
+
+env | grep '^SLURM_' | sort > "$RUN_DIR/logs/slurm_environment.txt"
+echo "Agent-count run (diffusion forcing): group=$GROUP key=$RUN_KEY"
+echo "Encoder: $VAE_CHECKPOINT"
+echo "Background gradient: $BACKGROUND_GRADIENT"
+echo "Output directory: $RUN_DIR"
+
+module restore
+
+if [[ ! -f "$VAE_CHECKPOINT" ]]; then
+  echo "VAE checkpoint not found: $VAE_CHECKPOINT" >&2
+  exit 1
+fi
+
+if (( IS_FLOOR )); then
+  # num_agents=1 lives in the config. collection.partial_agents is deliberately
+  # NOT overridden -- it stays at data_recording.yaml's default of 10, matching
+  # exp07's stage 1 and the Aug 5 floor. Consequence: the floor's training
+  # palette is the 10-hue one, so at eval it is fed an N-hue palette for N != 10.
+  # Strictly valid at N=10; indicative elsewhere for color_agent/color_bg. Only
+  # random_hue's floor is palette-free and therefore valid at every N.
+  run_training 2860m \
+    uv run python train_flock_dit.py \
+    --config config/train_flockdit_latent_single_stream.yaml \
+    "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=${BACKGROUND_GRADIENT}]" \
+    "output_dir=$RUN_DIR" \
+    "experiment_name=$RUN_ID" \
+    "${COMMON_OVERRIDES[@]}"
+else
+  run_training 2860m \
+    uv run python train_flock_dit.py \
+    --config config/train_flockdit_latent_multi_stream_df.yaml \
+    "data.num_agents=$NUM_AGENTS" \
+    "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=${BACKGROUND_GRADIENT},collection.partial_agents=${NUM_AGENTS}]" \
+    "output_dir=$RUN_DIR" \
+    "experiment_name=$RUN_ID" \
+    "${COMMON_OVERRIDES[@]}"
+fi
+
+status=$?
+if (( status != 0 )); then
+  echo "Run $GROUP/$RUN_KEY failed with status $status" >&2
+  exit "$status"
+fi
+
+echo "Run $GROUP/$RUN_KEY completed gracefully"
