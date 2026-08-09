@@ -1,0 +1,95 @@
+#!/bin/bash
+#SBATCH --account=ustun_1726
+#SBATCH --partition=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=26
+#SBATCH --constraint=a40|a100
+#SBATCH --gres=gpu:1
+#SBATCH --mem=90G
+#SBATCH --time=48:00:00
+#SBATCH --array=0-5
+#SBATCH --job-name=flockdit-agentcount
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
+#SBATCH --signal=TERM@600
+
+set -uo pipefail
+
+PATH_CONFIG="${FLOCKWORLD_PATH_CONFIG:-${SLURM_SUBMIT_DIR}/config/slurm_paths.conf}"
+source "$PATH_CONFIG"
+
+PROJECT_SRC="$FLOCKWORLD_CODE_DIR"
+cd "$PROJECT_SRC"
+
+export PYTHONUNBUFFERED=1
+
+CONFIG=config/train_flockdit_latent_multi_stream.yaml
+
+COMMON_OVERRIDES=(
+  data.streaming.clips_per_epoch=20000
+  train.epochs=-1
+  train.save_every=2
+  train.save_every_steps=25000
+  train.keep_step_checkpoints=0
+  "vae.checkpoint_path=$FLOCKWORLD_VAE_CHECKPOINT"
+)
+
+run_training() {
+  local duration="$1"
+  shift
+  echo "[$(date --iso-8601=seconds)] starting: $*"
+  timeout --signal=TERM --kill-after=5m --preserve-status "$duration" "$@"
+  local status=$?
+  echo "[$(date --iso-8601=seconds)] finished with status $status"
+  return "$status"
+}
+
+# Agent-count scaling sweep: one array task per number of observing agents.
+AGENT_COUNTS=(2 5 8 10 20 30)
+
+if (( SLURM_ARRAY_TASK_ID < 0 || SLURM_ARRAY_TASK_ID >= ${#AGENT_COUNTS[@]} )); then
+  echo "Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID" >&2
+  exit 2
+fi
+
+NUM_AGENTS="${AGENT_COUNTS[$SLURM_ARRAY_TASK_ID]}"
+RUN_KEY="$(printf 'agents%02d' "$NUM_AGENTS")"
+
+RUN_ID="${RUN_KEY}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RUN_DIR="$FLOCKWORLD_STORAGE_DIR/output/agentcount_20260804/$RUN_ID"
+mkdir -p "$RUN_DIR/logs" "$RUN_DIR/wandb"
+export WANDB_DIR="$RUN_DIR/wandb"
+exec > >(tee -a "$RUN_DIR/logs/stdout.log") \
+  2> >(tee -a "$RUN_DIR/logs/stderr.log" >&2)
+
+env | grep '^SLURM_' | sort > "$RUN_DIR/logs/slurm_environment.txt"
+echo "Agent-count run: $RUN_KEY (num_agents=$NUM_AGENTS)"
+echo "Output directory: $RUN_DIR"
+
+module restore
+
+if [[ ! -f "$FLOCKWORLD_VAE_CHECKPOINT" ]]; then
+  echo "VAE checkpoint not found: $FLOCKWORLD_VAE_CHECKPOINT" >&2
+  exit 1
+fi
+
+# Solid black background + per-agent-id dart colors -- must match the VAE's
+# training condition so the encoder sees in-distribution frames.
+SIM_OVERRIDES="data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=false,collection.partial_agents=${NUM_AGENTS}]"
+
+run_training 2860m \
+  uv run python train_flock_dit.py --config "$CONFIG" \
+  "data.num_agents=$NUM_AGENTS" \
+  "$SIM_OVERRIDES" \
+  "output_dir=$RUN_DIR" \
+  "experiment_name=$RUN_ID" \
+  "${COMMON_OVERRIDES[@]}"
+
+status=$?
+if (( status != 0 )); then
+  echo "Run $RUN_KEY failed with status $status" >&2
+  exit "$status"
+fi
+
+echo "Run $RUN_KEY completed gracefully"

@@ -1,0 +1,75 @@
+#!/bin/bash
+#SBATCH --account=ustun_1726
+#SBATCH --partition=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=26
+#SBATCH --constraint=a40|a100
+#SBATCH --gres=gpu:1
+#SBATCH --mem=90G
+#SBATCH --time=48:00:00
+#SBATCH --job-name=flockdit-color-bg
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
+#SBATCH --signal=TERM@600
+
+set -uo pipefail
+
+PATH_CONFIG="${FLOCKWORLD_PATH_CONFIG:-${SLURM_SUBMIT_DIR}/config/slurm_paths.conf}"
+source "$PATH_CONFIG"
+
+PROJECT_SRC="$FLOCKWORLD_CODE_DIR"
+cd "$PROJECT_SRC"
+
+export PYTHONUNBUFFERED=1
+
+CONFIG=config/train_flockdit_latent_multi_stream.yaml
+VAE_CHECKPOINT="$FLOCKWORLD_STORAGE_DIR/pretrained/color_bg/vae-6928-0.0034.ckpt"
+RUN_ID="flock_dit_multi_stream_color_bg-${SLURM_JOB_ID}"
+RUN_DIR="$FLOCKWORLD_STORAGE_DIR/output/flock_dit_multi_stream_color_bg"
+
+mkdir -p "$RUN_DIR/logs" "$RUN_DIR/wandb"
+export WANDB_DIR="$RUN_DIR/wandb"
+exec > >(tee -a "$RUN_DIR/logs/stdout.log") \
+  2> >(tee -a "$RUN_DIR/logs/stderr.log" >&2)
+
+env | grep '^SLURM_' | sort > "$RUN_DIR/logs/slurm_environment.txt"
+echo "Multi-stream color-bg VAE run: $RUN_ID"
+echo "Output directory: $RUN_DIR"
+
+module restore
+
+if [[ ! -f "$VAE_CHECKPOINT" ]]; then
+  echo "VAE checkpoint not found: $VAE_CHECKPOINT" >&2
+  exit 1
+fi
+
+run_training() {
+  local duration="$1"
+  shift
+  echo "[$(date --iso-8601=seconds)] starting: $*"
+  timeout --signal=TERM --kill-after=5m --preserve-status "$duration" "$@"
+  local status=$?
+  echo "[$(date --iso-8601=seconds)] finished with status $status"
+  return "$status"
+}
+
+# Sim overrides must match the color_bg VAE's training condition (colored
+# agents on a gradient background) so the encoder sees in-distribution frames.
+run_training 2860m \
+  uv run python train_flock_dit.py --config "$CONFIG" \
+  "vae.checkpoint_path=$VAE_CHECKPOINT" \
+  "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=true]" \
+  data.streaming.clips_per_epoch=20000 \
+  train.epochs=-1 \
+  train.save_every=2 \
+  "output_dir=$RUN_DIR" \
+  "experiment_name=$RUN_ID"
+
+status=$?
+if (( status != 0 )); then
+  echo "Run failed with status $status" >&2
+  exit "$status"
+fi
+
+echo "Run completed gracefully"
