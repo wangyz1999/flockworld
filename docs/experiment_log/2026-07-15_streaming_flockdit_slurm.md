@@ -18,9 +18,9 @@ script and each array task.
 | Resource | Path |
 |---|---|
 | Code checkout | `/home1/yunzhewa/projects/flockworld` |
-| Project storage | `/project2/ustun_1726/flowckworld` |
-| Experiment runs | `/project2/ustun_1726/flowckworld/output/flockdit_streaming_20260715` |
-| VAE checkpoint | `/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt` |
+| Project storage | `/project2/ustun_1726/flockworld` |
+| Experiment runs | `/project2/ustun_1726/flockworld/output/flockdit_streaming_20260715` |
+| VAE checkpoint | `/project2/ustun_1726/flockworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt` |
 
 Edit only `config/slurm_paths.conf` if either server location changes. Each Slurm task
 automatically creates its own unique run directory. That directory contains `logs/`,
