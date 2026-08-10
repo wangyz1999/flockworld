@@ -1,0 +1,99 @@
+{
+  "experiment": "exp06_tiled_df",
+  "config": null,
+  "output_dir": null,
+  "num_agents": 10,
+  "n_ep": 6,
+  "eval_args": {
+    "episodes": 6,
+    "seconds": 10.0,
+    "sim_fps": 30,
+    "steps": 50,
+    "eval_seed": 0,
+    "no_floor": false
+  },
+  "columns": {
+    "ceiling": {
+      "tier_a": {
+        "detection_rate": 0.9716434015637888,
+        "position_error": 1.4900467649261495,
+        "mean_detected_per_frame": 5.01111111111111,
+        "mean_gt_visible_per_frame": 5.139281705948373
+      },
+      "consistency": {
+        "reciprocity_rate": 0.5395773573661905,
+        "displacement_error": 3.061931007786273,
+        "motion_error": 0.598368358939172,
+        "white_correspondence": 0.9299398119304335,
+        "sightings_per_frame": 0.073824666417259,
+        "white_count_error": 0.17428798538544502
+      },
+      "pixel": {
+        "psnr": 27.69850113651698,
+        "ssim": 0.9478868423893131
+      },
+      "volume": {
+        "n_sightings": 5920,
+        "n_reciprocal": 1773,
+        "n_matched_white": 4676,
+        "n_overlap_white": 5053,
+        "n_pixel_events": 1773
+      }
+    },
+    "model": {
+      "tier_a": {
+        "detection_rate": 0.15701629619935578,
+        "position_error": 2.508698529072669,
+        "mean_detected_per_frame": 4.667789001122334,
+        "mean_gt_visible_per_frame": 5.139281705948373
+      },
+      "consistency": {
+        "reciprocity_rate": 0.13529932284086546,
+        "displacement_error": 37.973626758907436,
+        "motion_error": 3.3192303114675634,
+        "white_correspondence": 0.4575209932027953,
+        "sightings_per_frame": 0.030352911834393315,
+        "white_count_error": 2.264725155187264
+      },
+      "pixel": {
+        "psnr": 17.49616082911914,
+        "ssim": 0.8380217421992112
+      },
+      "volume": {
+        "n_sightings": 2434,
+        "n_reciprocal": 176,
+        "n_matched_white": 343,
+        "n_overlap_white": 890,
+        "n_pixel_events": 176
+      }
+    },
+    "baseline": {
+      "tier_a": {
+        "detection_rate": 0.1741895196075708,
+        "position_error": 3.122611133930365,
+        "mean_detected_per_frame": 11.837485970819303,
+        "mean_gt_visible_per_frame": 5.139281705948373
+      },
+      "consistency": {
+        "reciprocity_rate": 0.17055057809576968,
+        "displacement_error": 64.89891984810627,
+        "motion_error": 23.764901991132817,
+        "white_correspondence": 0.147140046173098,
+        "sightings_per_frame": 0.2789998752961716,
+        "white_count_error": 7.4660470251862705
+      },
+      "pixel": {
+        "psnr": 8.578423218986462,
+        "ssim": 0.3060336493782542
+      },
+      "volume": {
+        "n_sightings": 22373,
+        "n_reciprocal": 1930,
+        "n_matched_white": 4584,
+        "n_overlap_white": 30601,
+        "n_pixel_events": 1930
+      }
+    }
+  },
+  "source_comparison_json": "eval_results/20260809_full_fidelity/results/streaming_arch/comparison.json"
+}

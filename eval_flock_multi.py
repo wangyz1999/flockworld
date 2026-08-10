@@ -150,6 +150,7 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
     S = {s: [] for s in cols}                              # hue-smoothing stats per episode
     n_cam = _num_camera_agents(cfg, cfg.data.num_agents)   # hue period for identity colors
     smooth_cam = None if args.no_hue_smooth else n_cam     # None -> per-frame hue, no smoothing
+    episode_ids = []                                       # per-instance record, same order as A/B/C/S
     print(f"metrics: {args.seconds}s = {n_lat} latent frames, {n_ep} episodes "
           f"(baseline={args.baseline}, n_cam={n_cam})")
     print("hue smoothing: OFF (per-frame identity)" if args.no_hue_smooth else
@@ -157,6 +158,7 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
           f"link={args.hue_link_dist:g}px)")
     for e in range(n_ep):
         ep = ds.full_episode(e); ctx = int(ep["context_len"]); T = min(n_lat, ep["frames"].shape[1])
+        episode_ids.append(ep["episode_id"])
         cam_idx = [ai - 1 for ai in ep["agent_indices"]]
         pos = _gt_positions(cfg, ds, ep["episode_id"])
         frames = ep["frames"].unsqueeze(0).to(device)
@@ -262,7 +264,35 @@ def run_metrics(cfg, model, baseline_model, ds, decode_fn, device, args):
         for c in cols:
             v = [p for (f, p, _s) in ev[c] if lo <= f < hi]
             results["psnr_by_overlap"][key][c] = float(np.mean(v)) if v else None
+
+    # Raw per-episode records (not just the means above) -- lets --save-csv reproduce
+    # every number in this run (including error bars / distributions) without a rerun.
+    results["episode_ids"] = episode_ids
+    results["per_episode"] = {
+        s: {"tier_a": A[s], "consistency": B[s], "pixel": C[s], "hue_smoothing": S[s]}
+        for s in cols
+    }
     return results
+
+
+def write_metrics_csv(path, tag, results):
+    """One row per (column, episode, metric) -- long/tidy format, safe to concat across runs."""
+    import csv
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    episode_ids = results["episode_ids"]
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["experiment", "column", "episode_index", "episode_id", "family", "metric", "value"])
+        for col, families in results["per_episode"].items():
+            for family, records in families.items():
+                for i, rec in enumerate(records):
+                    eid = episode_ids[i] if i < len(episode_ids) else ""
+                    for k, v in rec.items():
+                        if isinstance(v, (list, dict, tuple)):
+                            continue  # non-scalar (e.g. raw event lists) -- not tidy-CSV shaped
+                        w.writerow([tag, col, i, eid, family, k, v])
+    print(f"wrote per-episode CSV -> {path}")
 
 
 @torch.no_grad()
@@ -330,6 +360,10 @@ def main():
                          "color per frame (the behavior before smoothing was added).")
     ap.add_argument("--save-json", default=None,
                     help="metrics mode: write the structured results table to this JSON path.")
+    ap.add_argument("--save-csv", default=None,
+                    help="metrics mode: write per-episode (not just averaged) records to this CSV "
+                         "path, one row per (column, episode, metric) -- so future plotting/stats "
+                         "don't require a rerun.")
     ap.add_argument("--tag", default=None,
                     help="experiment name recorded in --save-json output; defaults to the "
                          "output_dir's basename.")
@@ -426,6 +460,8 @@ def main():
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(payload, indent=2))
             print(f"\nwrote metrics JSON -> {out_path}")
+        if args.save_csv:
+            write_metrics_csv(args.save_csv, args.tag or Path(cfg.output_dir).name, results)
     else:
         run_overlay(cfg, model, ds, decode_fn, device, args)
 

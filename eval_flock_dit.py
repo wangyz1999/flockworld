@@ -29,16 +29,26 @@ from modeling.utils.seed import seed_everything
 
 
 def find_best_checkpoint(ckpt_dir: Path) -> tuple[Path, float]:
-    """Pick the checkpoint with the lowest stored val_loss (mmap = cheap scan)."""
+    """Pick the checkpoint with the lowest stored val_loss (mmap = cheap scan).
+
+    Falls back to the newest ``step_*.pt`` (zero-padded global_step, so sorted
+    name order == numeric order) when no ``epoch_*.pt`` has a stored val_loss --
+    e.g. a run packaged/transferred before its next epoch boundary. The returned
+    val_loss is ``nan`` in that case (no val pass has run for a step checkpoint);
+    callers that print/compare it should treat nan as "unscored", not "best".
+    """
     best, best_val = None, float("inf")
     for p in sorted(ckpt_dir.glob("epoch_*.pt")):
         meta = torch.load(p, map_location="cpu", weights_only=False, mmap=True)
         v = meta.get("val_loss")
         if v is not None and float(v) < best_val:
             best, best_val = p, float(v)
-    if best is None:
-        raise FileNotFoundError(f"No checkpoints with a val_loss found in {ckpt_dir}")
-    return best, best_val
+    if best is not None:
+        return best, best_val
+    steps = sorted(ckpt_dir.glob("step_*.pt"))
+    if steps:
+        return steps[-1], float("nan")
+    raise FileNotFoundError(f"No checkpoints with a val_loss found in {ckpt_dir}")
 
 
 def build_model(cfg) -> FlockDiT:

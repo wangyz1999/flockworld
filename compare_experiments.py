@@ -158,6 +158,20 @@ def main():
     ap.add_argument("--grid-cols", type=int, default=5,
                     help="columns in the tiled POV grid (10 agents -> 5 gives a clean 5x2; "
                          "0 falls back to near-square packing, which leaves a 2-cell hole).")
+    ap.add_argument("--save-json", default=None,
+                    help="write the aggregated (mean-over-episodes) table to this JSON path.")
+    ap.add_argument("--save-csv", default=None,
+                    help="write per-episode (not just averaged) records to this CSV path, one row "
+                         "per (column, episode, metric) -- so future plotting/stats don't require "
+                         "a rerun of this comparison.")
+    ap.add_argument("--extra-single-agent-name", default=None,
+                    help="label for an EXTRA informational column, rolled out per-camera-agent by "
+                         "an independent single-agent model (same mechanism as --no-floor's floor "
+                         "column) -- added alongside, not instead of, the regular floor. Must share "
+                         "the include columns' VAE checkpoint. Requires --extra-single-agent-config "
+                         "and --extra-single-agent-dir.")
+    ap.add_argument("--extra-single-agent-config", default=None)
+    ap.add_argument("--extra-single-agent-dir", default=None)
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -253,7 +267,21 @@ def main():
         del model
         torch.cuda.empty_cache()
 
-    cols = (["ceiling"] + ([] if args.no_floor else ["floor"]) + list(args.include))
+    extra_name = args.extra_single_agent_name
+    if extra_name:
+        print(f"\n=== {extra_name} (extra, informational single-agent column: "
+              f"{args.extra_single_agent_dir}) ===")
+        xcfg = load_cfg(args.extra_single_agent_config, [f"output_dir={args.extra_single_agent_dir}"])
+        extra_model = _load_model(xcfg, xcfg.output_dir, device)
+        extra_mean, extra_std = fit_train_stats(xcfg, vae, device)
+        run_column(extra_name, lambda f, a, ctx, T, wf, steps: _rollout_single(
+            extra_model, f, a, ctx, T, wf, steps),
+            make_decode_fn(vae, device, extra_mean, extra_std), (extra_mean, extra_std))
+        del extra_model
+        torch.cuda.empty_cache()
+
+    cols = (["ceiling"] + ([] if args.no_floor else ["floor"]) + list(args.include)
+            + ([extra_name] if extra_name else []))
 
     def mean(acc, key):
         vals = [d[key] for d in acc if not (isinstance(d[key], float) and d[key] != d[key])]
@@ -295,6 +323,41 @@ def main():
         (columns_c, "n_pixel_events", "n_pixel_events (psnr/ssim)"),
     ]:
         print(f"{lab:>34}" + "".join(f"{total(acc[c], key):>16}" for c in cols))
+
+    if args.save_json or args.save_csv:
+        episode_ids = [episode_ctx[i][0]["episode_id"] for i in range(n_ep)]
+        per_episode = {
+            c: {"tier_a": columns_a[c], "consistency": columns_b[c], "pixel": columns_c[c]}
+            for c in cols
+        }
+        if args.save_json:
+            import json
+            summary = {
+                "include": args.include, "cols": cols, "n_ep": n_ep,
+                "eval_args": {"episodes": args.episodes, "seconds": args.seconds,
+                              "sim_fps": args.sim_fps, "steps": args.steps,
+                              "eval_seed": args.eval_seed, "no_floor": args.no_floor},
+                "floor_config": FLOOR_CONFIG, "floor_output_dir": FLOOR_OUTPUT_DIR,
+                "extra_single_agent": ({"name": extra_name, "config": args.extra_single_agent_config,
+                                         "output_dir": args.extra_single_agent_dir}
+                                        if extra_name else None),
+                "columns": {
+                    c: {
+                        "tier_a": {k: mean(columns_a[c], k) for k in TIER_A_KEYS + ["mean_gt_visible_per_frame"]},
+                        "consistency": {k: mean(columns_b[c], k) for k in CONSISTENCY_KEYS},
+                        "pixel": {k: mean(columns_c[c], k) for k in PIXEL_KEYS},
+                    } for c in cols
+                },
+                "episode_ids": episode_ids,
+                "per_episode": per_episode,
+            }
+            out_path = Path(args.save_json); out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(summary, indent=2))
+            print(f"\nwrote comparison JSON -> {out_path}")
+        if args.save_csv:
+            from eval_flock_multi import write_metrics_csv
+            write_metrics_csv(args.save_csv, "+".join(args.include),
+                               {"episode_ids": episode_ids, "per_episode": per_episode})
 
     if n_vid > 0:
         print(f"\nwriting {n_vid} overlay video(s) per column -> {args.video_dir}")

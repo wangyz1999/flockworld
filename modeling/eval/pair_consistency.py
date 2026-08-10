@@ -226,16 +226,12 @@ def _find(view: dict, target: int, n_cam: int, tol: float = 0.25):
 
 
 def _whites(view: dict) -> np.ndarray:
-<<<<<<< HEAD
-    """White (achromatic) centroids (M,2) -- the third-party boids.
+    """White (achromatic, NaN-hue) centroids (M,2) -- the third-party boids.
 
     Uses the track-voted ``ident`` when smoothing has run, so a white boid that
     flashes colored (or a camera agent that flashes white) does not jump between
     the sighting pool and the third-party pool mid-flight.
     """
-=======
-    """White (achromatic, NaN-hue) centroids (M,2) -- the third-party boids."""
->>>>>>> origin/main
     cents = np.asarray(view["centroids"], np.float32)
     if len(cents) == 0:
         return cents

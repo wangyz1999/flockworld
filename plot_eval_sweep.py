@@ -75,6 +75,10 @@ VOLUME_METRICS = [
 STREAMING_ORDER = [
     "exp01_baseline", "exp02_tiled", "exp03_diffusion_forcing", "exp04_two_stage",
     "exp06_tiled_df", "exp07_tiled_df_two_stage", "exp08_tiled_two_stage",
+    # informational-only: independent single-agent model rolled out per camera-agent
+    # (not a multi-agent cross-attention architecture like the rest of this list) --
+    # see compare_experiments.py --extra-single-agent-*.
+    "single_stream_floor_new",
 ]
 
 COLUMN_ORDER = ["ceiling", "model", "baseline"]
@@ -90,9 +94,17 @@ def load_entries(group_dir: Path) -> list[dict]:
     for p in sorted(group_dir.glob("*.json")):
         try:
             with open(p) as f:
-                entries.append(json.load(f))
+                entry = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             print(f"  skipping {p}: {e}")
+            continue
+        if "experiment" not in entry:
+            # e.g. compare_experiments.py's combined comparison.json living alongside the
+            # per-experiment files adapt_streaming_arch_json.py splits it into -- not itself
+            # a per-experiment entry.
+            print(f"  skipping {p}: no 'experiment' key (not a per-experiment entry)")
+            continue
+        entries.append(entry)
     return entries
 
 
