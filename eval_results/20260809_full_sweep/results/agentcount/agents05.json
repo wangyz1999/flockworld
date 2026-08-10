@@ -2,12 +2,12 @@
   "experiment": "agents05",
   "config": "config/train_flockdit_latent_multi_stream.yaml",
   "overrides": [
-    "vae.checkpoint_path=/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt",
+    "vae.checkpoint_path=/path/to/flockworld-storage/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt",
     "data.num_agents=5",
     "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=false,collection.partial_agents=5]",
-    "output_dir=/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents05-10826537_1"
+    "output_dir=/path/to/flockworld-storage/output/agentcount_20260804/agents05-10826537_1"
   ],
-  "output_dir": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents05-10826537_1",
+  "output_dir": "/path/to/flockworld-storage/output/agentcount_20260804/agents05-10826537_1",
   "streaming": true,
   "num_agents": 5,
   "background_size": null,
@@ -20,13 +20,13 @@
     "baseline": "single"
   },
   "model_checkpoint": {
-    "path": "/project2/ustun_1726/flowckworld/output/agentcount_20260804/agents05-10826537_1/checkpoints/epoch_0162.pt",
+    "path": "/path/to/flockworld-storage/output/agentcount_20260804/agents05-10826537_1/checkpoints/epoch_0162.pt",
     "val_loss": 0.3058807970955968
   },
   "baseline_config": "config/train_flockdit_latent_single_stream.yaml",
-  "baseline_output_dir": "/project2/ustun_1726/flowckworld/output/flock_dit_single_stream_floor",
+  "baseline_output_dir": "/path/to/flockworld-storage/output/flock_dit_single_stream_floor",
   "baseline_checkpoint": {
-    "path": "/project2/ustun_1726/flowckworld/output/flock_dit_single_stream_floor/checkpoints/epoch_0252.pt",
+    "path": "/path/to/flockworld-storage/output/flock_dit_single_stream_floor/checkpoints/epoch_0252.pt",
     "val_loss": 0.3094778014346957
   },
   "n_ep": 3,

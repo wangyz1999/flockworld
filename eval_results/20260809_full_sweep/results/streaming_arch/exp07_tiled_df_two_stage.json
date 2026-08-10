@@ -2,10 +2,10 @@
   "experiment": "exp07_tiled_df_two_stage",
   "config": "config/train_flockdit_latent_multi_stream_triple.yaml",
   "overrides": [
-    "vae.checkpoint_path=/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt",
-    "output_dir=/project2/ustun_1726/flowckworld/output/flockdit_streaming_20260715/exp07_tiled_df_two_stage-10621962_5"
+    "vae.checkpoint_path=/path/to/flockworld-storage/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt",
+    "output_dir=/path/to/flockworld-storage/output/flockdit_streaming_20260715/exp07_tiled_df_two_stage-10621962_5"
   ],
-  "output_dir": "/project2/ustun_1726/flowckworld/output/flockdit_streaming_20260715/exp07_tiled_df_two_stage-10621962_5",
+  "output_dir": "/path/to/flockworld-storage/output/flockdit_streaming_20260715/exp07_tiled_df_two_stage-10621962_5",
   "streaming": true,
   "num_agents": 10,
   "background_size": null,
@@ -18,7 +18,7 @@
     "baseline": "none"
   },
   "model_checkpoint": {
-    "path": "/project2/ustun_1726/flowckworld/output/flockdit_streaming_20260715/exp07_tiled_df_two_stage-10621962_5/checkpoints/epoch_0058.pt",
+    "path": "/path/to/flockworld-storage/output/flockdit_streaming_20260715/exp07_tiled_df_two_stage-10621962_5/checkpoints/epoch_0058.pt",
     "val_loss": 0.3103122999891639
   },
   "baseline_config": null,

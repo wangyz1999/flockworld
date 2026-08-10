@@ -1,7 +1,7 @@
 # Streaming FlockDiT Slurm Experiments
 
 - Recorded: 2026-07-15 19:17:20 -07:00
-- Slurm account: `ustun_1726`
+- Slurm account: `<slurm-account>`
 - Partition: `gpu`
 - GPU constraint: `a40|a100`
 - Allocation per task: 1 GPU, 26 CPUs, 90 GB RAM, 48 hours
@@ -17,10 +17,10 @@ script and each array task.
 
 | Resource | Path |
 |---|---|
-| Code checkout | `/home1/yunzhewa/projects/flockworld` |
-| Project storage | `/project2/ustun_1726/flowckworld` |
-| Experiment runs | `/project2/ustun_1726/flowckworld/output/flockdit_streaming_20260715` |
-| VAE checkpoint | `/project2/ustun_1726/flowckworld/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt` |
+| Code checkout | `/path/to/flockworld` |
+| Project storage | `/path/to/flockworld-storage` |
+| Experiment runs | `/path/to/flockworld-storage/output/flockdit_streaming_20260715` |
+| VAE checkpoint | `/path/to/flockworld-storage/pretrained/color_agent/checkpoint2/vae-081-0.0042.ckpt` |
 
 Edit only `config/slurm_paths.conf` if either server location changes. Each Slurm task
 automatically creates its own unique run directory. That directory contains `logs/`,

@@ -478,7 +478,7 @@ included) needs a much longer allocation — see the time-cost note at the top.
 To re-run:
 
 ```bash
-cd /home1/yunzhewa/projects/flockworld
+cd /path/to/flockworld
 SWEEP_ID=<new_id> EPISODES=6 SECONDS_=10 STEPS=50 \
   bash jobs/eval_sweep_20260809/run_eval_sweep.sh all
 uv run python plot_eval_sweep.py \
@@ -506,7 +506,7 @@ jobs/eval_sweep_20260809/run_eval_sweep.sh   the sweep driver script
 plot_eval_sweep.py                            plotting + table generator (repo root)
 ```
 
-Checkpoints and training logs referenced here live on `/project2/ustun_1726/flowckworld/output/`
+Checkpoints and training logs referenced here live on `/path/to/flockworld-storage/output/`
 (see `docs/experiment_log/2026-07-15_streaming_flockdit_slurm.md` for the
 architecture-ablation training matrix, and `jobs/agentcount_20260804/agentcount.job`
 for the agent-count sweep's training config).
