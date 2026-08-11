@@ -2,6 +2,8 @@
 
 **A multi-agent world model of an egocentric flocking simulation.**
 
+![One arena of 100 boids with ten camera agents, and the ten egocentric views FlockDiT generates for them](docs/media/teaser.png)
+
 Ten agents fly in one shared arena, each seeing only its own egocentric crop. A
 single generative video model predicts all ten views jointly — and the question
 this repository is built to answer is whether those ten views stay *mutually
