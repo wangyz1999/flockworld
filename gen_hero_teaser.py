@@ -46,7 +46,7 @@ CAPTION_L = "One arena: 100 boids, 10 carrying cameras"
 CAPTION_R = "Ten egocentric views, generated jointly by one model"
 SUBCAPTION = ("Each box marks a camera agent's 128px crop; the tile bordered in the same colour is "
               "that agent's generated view of this instant.")
-QUESTION = "The model never sees the arena — only the ten views. Do they agree about where everyone is?"
+QUESTION = "The model never sees the arena — only the ten views. Can it imagine the whole flock?"
 
 # Point sizes. The right title carries a much wider panel than the left, so it
 # is set larger to read at the same weight.
