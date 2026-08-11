@@ -48,6 +48,14 @@ SUBCAPTION = ("Each box marks a camera agent's 128px crop; the tile bordered in 
               "that agent's generated view of this instant.")
 QUESTION = "The model never sees the arena — only the ten views. Do they agree about where everyone is?"
 
+# Point sizes. The right title carries a much wider panel than the left, so it
+# is set larger to read at the same weight.
+FS_TITLE_L = 12.0
+FS_TITLE_R = 15.0
+FS_QUESTION = 16.0
+FS_SUBCAPTION = 12.0
+FS_ARROW = 13.5
+
 
 def agent_hue(k: int, p: int) -> tuple[float, float, float]:
     """The renderer's own identity colour for camera agent ``k``."""
@@ -141,12 +149,12 @@ def _compose(arena, positions, tiles, crop, rows, cols, out_stem, dpi):
 
     # One row: arena, arrow, tiles. Widths in figure units track pixel aspect so
     # neither panel is stretched.
-    fig_w, fig_h = 13.0, 5.4
+    fig_w, fig_h = 13.0, 5.6
     fig = plt.figure(figsize=(fig_w, fig_h), facecolor="black")
 
-    ax_a = fig.add_axes([0.015, 0.09, 0.315, 0.84])
-    ax_m = fig.add_axes([0.345, 0.09, 0.055, 0.84])
-    ax_t = fig.add_axes([0.405, 0.09, 0.585, 0.84])
+    ax_a = fig.add_axes([0.015, 0.12, 0.315, 0.80])
+    ax_m = fig.add_axes([0.345, 0.12, 0.055, 0.80])
+    ax_t = fig.add_axes([0.405, 0.12, 0.585, 0.80])
     for ax in (ax_a, ax_m, ax_t):
         ax.set_facecolor("black")
         ax.set_xticks([]), ax.set_yticks([])
@@ -168,7 +176,7 @@ def _compose(arena, positions, tiles, crop, rows, cols, out_stem, dpi):
         arrowprops=dict(arrowstyle="-|>", color="white", linewidth=1.8,
                         mutation_scale=18),
     )
-    ax_m.text(0.5, 0.545, "FlockDiT", color="white", fontsize=11.5,
+    ax_m.text(0.5, 0.545, "FlockDiT", color="white", fontsize=FS_ARROW,
               ha="center", va="bottom", transform=ax_m.transAxes)
 
     ax_t.imshow(tiles, interpolation="nearest")
@@ -188,13 +196,13 @@ def _compose(arena, positions, tiles, crop, rows, cols, out_stem, dpi):
 
     # Titles as figure text, so both sit on one baseline regardless of how each
     # image letterboxes inside its axes.
-    for ax, caption in ((ax_a, CAPTION_L), (ax_t, CAPTION_R)):
+    for ax, caption, size in ((ax_a, CAPTION_L, FS_TITLE_L), (ax_t, CAPTION_R, FS_TITLE_R)):
         box = ax.get_position()
         fig.text(box.x0 + box.width / 2, 0.945, caption, color="white",
-                 fontsize=11.5, ha="center", va="center")
-    fig.text(0.5, 0.062, QUESTION, color="white", fontsize=11,
+                 fontsize=size, ha="center", va="center")
+    fig.text(0.5, 0.072, QUESTION, color="white", fontsize=FS_QUESTION,
              ha="center", va="center")
-    fig.text(0.5, 0.021, SUBCAPTION, color="#8e8e8e", fontsize=9,
+    fig.text(0.5, 0.024, SUBCAPTION, color="#9a9a9a", fontsize=FS_SUBCAPTION,
              ha="center", va="center")
 
     fig.savefig(out_stem.with_suffix(".png"), dpi=dpi, facecolor="black",
