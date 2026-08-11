@@ -28,6 +28,14 @@ in, 297 frames out, with the agents' recorded accelerations replayed as actions.
 
 ![FlockDiT rollout, ten egocentric views tiled 5x2](docs/media/rollout_flockdit_df.gif)
 
+**Single-agent floor** — the same ten views, but each one rolled out
+independently by a single-agent model that never sees the other nine. This is
+what cross-view agreement looks like when there is no cross-view information to
+agree on: the focal agent comes out red in nearly every tile, because one model
+generating one view has nothing telling it which agent it is.
+
+![Single-agent floor rollout, ten independent views tiled 5x2](docs/media/rollout_floor.gif)
+
 Each tile is one camera agent's own 128x128 crop, upscaled 2x — not a slice of
 one global image. The colored boid near the center of a tile is that tile's
 agent; the other nine keep their hues wherever they show up, so agent 3's red
@@ -35,7 +43,8 @@ can be followed through agent 7's view. White boids are the 90 ambient boids,
 which have no viewpoint of their own. The white lines are arena walls.
 
 Full-quality MP4s: [ground truth](docs/media/rollout_ground_truth.mp4) ·
-[FlockDiT](docs/media/rollout_flockdit_df.mp4). Both show held-out episode
+[FlockDiT](docs/media/rollout_flockdit_df.mp4) ·
+[floor](docs/media/rollout_floor.mp4). All three show held-out episode
 `65e69251`; the GIFs are 12 fps, the MP4s 30.
 
 ---
