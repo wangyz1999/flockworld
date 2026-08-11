@@ -2,7 +2,7 @@
 
 **A multi-agent world model of an egocentric flocking simulation.**
 
-![One arena of 100 boids with ten camera agents, and the ten egocentric views FlockDiT generates for them](docs/media/teaser.png)
+![One arena of 100 boids with ten camera agents, and the ten egocentric views FlockWorld generates for them](docs/media/teaser.png)
 
 Ten agents fly in one shared arena, each seeing only its own egocentric crop. A
 single generative video model predicts all ten views jointly — and the question
@@ -25,10 +25,10 @@ this latent space can look.
 
 ![Ground-truth rollout, ten egocentric views tiled 5x2](docs/media/rollout_ground_truth.gif)
 
-**FlockDiT** (diffusion forcing, experiment 3) — generated. Two context frames
+**FlockWorld** (diffusion forcing, experiment 3) — generated. Two context frames
 in, 297 frames out, with the agents' recorded accelerations replayed as actions.
 
-![FlockDiT rollout, ten egocentric views tiled 5x2](docs/media/rollout_flockdit_df.gif)
+![FlockWorld rollout, ten egocentric views tiled 5x2](docs/media/rollout_flockworld_df.gif)
 
 **Single-agent floor** — the same ten views, but each one rolled out
 independently by a single-agent model that never sees the other nine. This is
@@ -45,7 +45,7 @@ can be followed through agent 7's view. White boids are the 90 ambient boids,
 which have no viewpoint of their own. The white lines are arena walls.
 
 Full-quality MP4s: [ground truth](docs/media/rollout_ground_truth.mp4) ·
-[FlockDiT](docs/media/rollout_flockdit_df.mp4) ·
+[FlockWorld](docs/media/rollout_flockworld_df.mp4) ·
 [floor](docs/media/rollout_floor.mp4). All three show held-out episode
 `65e69251`; the GIFs are 12 fps, the MP4s 30.
 
@@ -56,7 +56,7 @@ Full-quality MP4s: [ground truth](docs/media/rollout_ground_truth.mp4) ·
 | Part | Framework | Where |
 |---|---|---|
 | Flocking simulation, rendering, Gymnasium environment | JAX | `flockworld/` |
-| Video autoencoder + FlockDiT world model + training | PyTorch | `modeling/` |
+| Video autoencoder + world model + training | PyTorch | `modeling/` |
 | Evaluation, metrics, probes, figure generation | NumPy/SciPy | `modeling/eval/`, root-level scripts |
 
 Training data is **simulated on the fly** — there is no dataset to download.
@@ -110,7 +110,7 @@ Structured collection mode writes a timestamped dataset under `outputs/` with
 ### 2. Train
 
 The world model predicts in the latent space of a frozen video autoencoder, so
-training is two steps: train the VAE, then train FlockDiT on top of it.
+training is two steps: train the VAE, then train the world model on top of it.
 
 ```bash
 # (a) video autoencoder, in the agent-color condition
@@ -273,7 +273,7 @@ The released checkpoints are not equally trained: the agent-color autoencoder ra
 streamed clips. Since every ceiling is a decode through one of these, results are
 only ever compared against the ceiling from the same condition.
 
-### FlockDiT
+### World model
 
 A **flow-matching diffusion transformer** over the latent grid. Base
 configuration: 8 blocks, width 512, 8 attention heads, ~27.5M parameters — used
@@ -463,7 +463,7 @@ flockworld/            simulation + environment (JAX)
 
 modeling/              autoencoder + world model (PyTorch)
   models/
-    flock_dit.py       FlockDiT: flow-matching DiT over latents
+    flock_dit.py       Flow-matching DiT over latents
     frozen_vae.py      Frozen autoencoder wrapper
     vae_module.py      VAE training module
   data/                streaming + cached datasets, action pooling

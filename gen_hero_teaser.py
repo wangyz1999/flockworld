@@ -24,6 +24,7 @@ Usage
 from __future__ import annotations
 
 import colorsys
+import os
 import sys
 from pathlib import Path
 
@@ -56,6 +57,10 @@ FS_QUESTION = 16.0
 FS_SUBCAPTION = 12.0
 FS_ARROW = 13.5
 
+# First installed family wins. The tail is the fallback for machines without the
+# Windows UI fonts, so the figure still renders sanely on the cluster.
+FONT_STACK = ["Segoe UI", "Inter", "Source Sans Pro", "Open Sans", "DejaVu Sans"]
+
 
 def agent_hue(k: int, p: int) -> tuple[float, float, float]:
     """The renderer's own identity colour for camera agent ``k``."""
@@ -85,7 +90,7 @@ def main():
 
     episode = str(extra.get("episode", "65e69251"))
     frame_idx = int(extra.get("frame", 240))
-    video = Path(extra.get("video", "docs/media/rollout_flockdit_df.mp4"))
+    video = Path(extra.get("video", "docs/media/rollout_flockworld_df.mp4"))
     out_stem = Path(extra.get("out", "output/figures/teaser"))
     trail = int(extra.get("trail", 24))
     decay = float(extra.get("decay", 0.86))
@@ -143,6 +148,10 @@ def _compose(arena, positions, tiles, crop, rows, cols, out_stem, dpi):
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
 
+    stack = os.environ.get("TEASER_FONT")
+    matplotlib.rcParams["font.family"] = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"] = ([stack] if stack else []) + FONT_STACK
+
     n_cam = rows * cols
     h_arena = arena.shape[0]
     th, tw = tiles.shape[:2]
@@ -176,7 +185,7 @@ def _compose(arena, positions, tiles, crop, rows, cols, out_stem, dpi):
         arrowprops=dict(arrowstyle="-|>", color="white", linewidth=1.8,
                         mutation_scale=18),
     )
-    ax_m.text(0.5, 0.545, "FlockDiT", color="white", fontsize=FS_ARROW,
+    ax_m.text(0.5, 0.545, "FlockWorld", color="white", fontsize=FS_ARROW,
               ha="center", va="bottom", transform=ax_m.transAxes)
 
     ax_t.imshow(tiles, interpolation="nearest")
