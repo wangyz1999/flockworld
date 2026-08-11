@@ -485,6 +485,12 @@ training entry point, superseded by `train_flock_dit.py`. They are kept for
 reference and are not maintained; the default config path they expect no longer
 exists.
 
+## License
+
+FlockWorld is released under the Apache License 2.0 — see [LICENSE](LICENSE).
+Portions adapted from third-party projects retain their original licenses, as
+recorded in [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Acknowledgments
 
 This project builds on four pieces of prior work. Each section below states
@@ -558,4 +564,7 @@ configuration (8 latent channels, 16x spatial and 4x temporal compression).
 
 ## Citation
 
-Citation information will be added when the paper is available.
+FlockWorld is by Meryem Koksal (Grinnell College), Yunzhe Wang (University of
+Southern California), and Volkan Ustun (USC Institute for Creative
+Technologies). Machine-readable metadata is in [CITATION.cff](CITATION.cff); a
+paper reference will be added here once it is public.
