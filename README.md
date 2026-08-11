@@ -17,6 +17,27 @@ agree that agent 3 is off to its right?
 > Ten egocentric views of one shared arena, generated autoregressively for 10
 > seconds from two context frames.
 
+**Ground truth** — the simulation itself, run through the frozen autoencoder the
+world model predicts in. Nothing is generated here; this is the best anything in
+this latent space can look.
+
+![Ground-truth rollout, ten egocentric views tiled 5x2](docs/media/rollout_ground_truth.gif)
+
+**FlockDiT** (diffusion forcing, experiment 3) — generated. Two context frames
+in, 297 frames out, with the agents' recorded accelerations replayed as actions.
+
+![FlockDiT rollout, ten egocentric views tiled 5x2](docs/media/rollout_flockdit_df.gif)
+
+Each tile is one camera agent's own 128x128 crop, upscaled 2x — not a slice of
+one global image. The colored boid near the center of a tile is that tile's
+agent; the other nine keep their hues wherever they show up, so agent 3's red
+can be followed through agent 7's view. White boids are the 90 ambient boids,
+which have no viewpoint of their own. The white lines are arena walls.
+
+Full-quality MP4s: [ground truth](docs/media/rollout_ground_truth.mp4) ·
+[FlockDiT](docs/media/rollout_flockdit_df.mp4). Both show held-out episode
+`65e69251`; the GIFs are 12 fps, the MP4s 30.
+
 ---
 
 ## What's in here
@@ -228,12 +249,18 @@ causal, so no latent frame depends on future video frames.
 
 Trained from scratch on recorded clips with an L1 reconstruction loss and a
 KL penalty at weight 1e-6 — no perceptual or adversarial term; the rendered
-world is simple enough that L1 recovers it sharply. Afterwards the autoencoder
+world is simple enough that L1 recovers it sharply. This training happened
+separately from the world-model campaign, on a single RTX 4090 rather than the
+cluster. Afterwards the autoencoder
 is **frozen** and the world model trains and rolls out entirely in its latent
 space, using the deterministic posterior mean.
 
 Each visual condition needs its own condition-matched autoencoder
-(`config/train_vae*.yaml`).
+(`config/train_vae*.yaml`) — a mismatched one decodes to noise without raising.
+The released checkpoints are not equally trained: the agent-color autoencoder ran
+~115k steps on a fixed recorded corpus, the gradient-background one ~887k on
+streamed clips. Since every ceiling is a decode through one of these, results are
+only ever compared against the ceiling from the same condition.
 
 ### FlockDiT
 
@@ -296,7 +323,8 @@ The architecture already attends across agents; what varies is how tokens learn
 ## Experiments
 
 Every run trains the same 27.5M-parameter model for **48 hours of wall clock on
-one RTX 4090**, in the agent-color condition, with identical optimization
+one GPU** — an NVIDIA A40 or A100 on the SLURM cluster the campaign ran on — in
+the agent-color condition, with identical optimization
 settings — only the listed ingredients differ. Two-stage runs split the same
 budget into 12h single-agent pretraining + 36h multi-agent training. Fixing
 wall clock rather than step count means each mechanism pays its own overhead.
