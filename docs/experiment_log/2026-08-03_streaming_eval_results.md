@@ -2,14 +2,14 @@
 
 - Recorded: 2026-08-03 10:26:00 -07:00
 - Companion to: `docs/experiment_log/2026-07-15_streaming_flockdit_slurm.md` (training setup / experiment matrix)
-- Eval tooling: `compare_experiments.py`, `eval_flock_multi.py`, `modeling/eval/streaming_eval_dataset.py`
+- Eval tooling: `modeling/cli/compare_experiments.py`, `modeling/cli/eval_flock_multi.py`, `modeling/eval/streaming_eval_dataset.py`
 - Scope: experiments 1, 2, 3, 6 (finished training). Experiments 4, 7, 8 (two-stage) lost
   their stage-2 fine-tune to the DataLoader-worker crash fixed in `b242c22` and are
   currently retraining -- not included here yet.
 
 ## Why a new eval path was needed
 
-`eval_flock_multi.py` only worked against the old disk-recorded / precomputed-latent
+`modeling/cli/eval_flock_multi.py` only worked against the old disk-recorded / precomputed-latent
 pipeline. Streaming-trained checkpoints have no `data.root`, no precomputed latent
 cache, and no recorded GT trajectories on disk, so none of that eval path applied.
 Built to close that gap:
@@ -19,7 +19,7 @@ Built to close that gap:
 - `modeling/eval/streaming_eval_dataset.py`: generates a fixed set of held-out long
   episodes straight from the sim, VAE-encodes them, exposes GT positions -- the
   streaming analogue of `FlockingLatentMultiDataset`.
-- `compare_experiments.py`: runs the same held-out episodes through every
+- `modeling/cli/compare_experiments.py`: runs the same held-out episodes through every
   experiment's own checkpoint and prints a single comparison table.
 
 **Normalization caveat (important, affects absolute numbers slightly):** streaming
@@ -39,7 +39,7 @@ column below is normalized using its OWN checkpoint's exactly-replayed calibrati
 | Euler steps per window | 50 |
 | `ceiling` | Real GT latents, VAE-decoded, no rollout -- isolates VAE reconstruction loss from rollout drift |
 | `floor` | Independent single-agent model (exp04's stage-1 checkpoint), each of the 10 camera agents rolled out separately, no cross-attention |
-| Command | `uv run python compare_experiments.py --include exp01_baseline exp02_tiled exp03_diffusion_forcing exp06_tiled_df --episodes 6 --seconds 10 --steps 50` |
+| Command | `uv run python -m modeling.cli.compare_experiments --include exp01_baseline exp02_tiled exp03_diffusion_forcing exp06_tiled_df --episodes 6 --seconds 10 --steps 50` |
 
 **Floor caveat:** exp04's stage-1 checkpoint got only ~11h50m of training (by design --
 it's stage 1 of a two-stage recipe, not a standalone artifact), versus ~47h40m for
@@ -117,7 +117,7 @@ episodes/agents.
 
 ## Open threads / TODO when adding exp04, exp07, exp08
 
-- Add each to `EXPERIMENTS` in `compare_experiments.py` once their stage-2 retrain
+- Add each to `EXPERIMENTS` in `modeling/eval/experiments.py` once their stage-2 retrain
   finishes (checkpoint dir + config, same pattern as the existing four).
 - Re-run with `--include exp01_baseline exp02_tiled exp03_diffusion_forcing exp06_tiled_df exp04_two_stage exp07_... exp08_...`
   for a full 8-column table (9 with floor).

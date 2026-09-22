@@ -26,7 +26,7 @@ drivers): the VAE decoder flashes a boid's color for stretches of frames, so a
 per-frame hue read mislabels it while the flash lasts -- the sighting is dropped,
 or the boid falls into the white (third-party) pool, and every rate above moves
 for a reason that has nothing to do with the model's spatial coherence
-(``diagnose_identity.py`` measures that instability per frame; this fixes it). A
+(``scripts/diagnostics/diagnose_identity.py`` measures that instability per frame; this fixes it). A
 boid does not change identity mid-flight, so identity is voted along a track
 instead of read per frame: link detections frame-to-frame by position, then give
 the whole track one label (or a rolling-window vote). This only RELABELS boids
@@ -76,7 +76,7 @@ def _identify(hue: np.ndarray, n_cam: int, tol: float = 0.25) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 IDENT_WHITE = -2      # achromatic -> a third-party (non-camera) boid
 IDENT_UNKNOWN = -1    # chromatic but off-palette -> no identity claimed
-                      # (the same three buckets diagnose_identity.py reports)
+                      # (the same three buckets scripts/diagnostics/diagnose_identity.py reports)
 
 
 def _frame_labels(view: dict, n_cam: int, tol: float) -> np.ndarray:

@@ -7,7 +7,7 @@ INFERRED: every camera agent's own egocentric video already shows that agent
 itself, always within ``FOCAL_EXCLUDE_PX`` of crop center (same convention as
 ``pair_consistency``), with a heading (``boid_detect._boid_heading``,
 validated to ~1 deg median error against GT on real frames -- see
-``validate_heading_detect.py``). That is a GT-free, per-agent heading
+``scripts/diagnostics/validate_heading_detect.py``). That is a GT-free, per-agent heading
 "fingerprint" over time, read straight from that agent's own rendered output.
 
 A candidate boid in agent A's view is hypothesized to be agent B if, over a
@@ -182,7 +182,7 @@ def heading_identity_consistency(dets: list, heading_thresh_deg: float = 30.0,
         w_boot: bootstrap window length (frames) used only to decide acceptance;
             scoring runs on the held-out frames after it.
         max_dist: max mean reciprocity error (px) to accept a candidate pairing.
-            Tuned via ``tune_heading_identity.py`` against real GT identity (not
+            Tuned via ``scripts/diagnostics/tune_heading_identity.py`` against real GT identity (not
             used at runtime, GT-free once tuned): reciprocity strictness, not
             heading strictness, is what actually separates correct from wrong
             identifications (flocking heading-alignment makes heading a weak

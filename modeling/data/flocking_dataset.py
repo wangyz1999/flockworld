@@ -103,7 +103,7 @@ class FlockingVideoDataset(Dataset):
         state_action_dir = self.root / "state_action"
         if not global_dir.is_dir() or not state_action_dir.is_dir():
             raise FileNotFoundError(
-                f"Expected {global_dir} and {state_action_dir} from data_recording.py collection output."
+                f"Expected {global_dir} and {state_action_dir} from flockworld/cli/data_recording.py collection output."
             )
 
         episode_ids = sorted(p.stem for p in global_dir.glob("*.mp4") if (state_action_dir / f"{p.stem}.parquet").exists())

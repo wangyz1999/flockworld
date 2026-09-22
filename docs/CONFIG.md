@@ -3,8 +3,8 @@
 FlockWorld loads `config/data_recording.yaml` and applies CLI overrides using OmegaConf dot-list syntax:
 
 ```bash
-python data_recording.py boids.num_agents=100 canvas.width=512 canvas.height=512
-python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 boids.num_agents=100 canvas.width=512 canvas.height=512
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
 ```
 
 ## Root
@@ -18,7 +18,7 @@ python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `generation.num_envs` | `1` | Number of independent homogeneous environments to generate in one headless run. Values above `1` batch simulation/rendering across environments. |
+| `generation.num_envs` | `4` | Number of independent homogeneous environments to generate in one headless run. Values above `1` batch simulation/rendering across environments. |
 | `generation.seed_stride` | `1` | Environment `i` uses seed `seed + i * seed_stride`. |
 | `generation.full_obs_path_template` | `"output/env_{env:04d}_seed_{seed}_full_obs.mp4"` | Full-observation output template for multi-env runs. Available fields: `{env}`, `{seed}`. |
 | `generation.partial_obs_path_template` | `"output/env_{env:04d}_seed_{seed}_partial_obs.mp4"` | Partial-observation output template for multi-env runs. Available fields: `{env}`, `{seed}`. |
@@ -45,14 +45,14 @@ cohesion, and separation rules. `heading` stores the movement angle in radians.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `collection.enabled` | `false` | If `true`, run structured dataset collection instead of writing the direct `video.*_path` outputs. |
-| `collection.output_root` | `"outputs"` | Parent directory for timestamped collection runs. |
-| `collection.total_episodes` | `1` | Total episode count to collect. Collection uses up to `generation.num_envs` environments at a time and stops exactly at this limit. |
-| `collection.partial_agents` | `1` | Number of first-agent partial-observation streams to save per episode. For example `2` writes `video_a1/00000.mp4` and `video_a2/00000.mp4`. |
+| `collection.enabled` | `true` | If `true`, run structured dataset collection instead of writing the direct `video.*_path` outputs. |
+| `collection.output_root` | `"data"` | Parent directory for timestamped collection runs. |
+| `collection.total_episodes` | `5000` | Total episode count to collect. Collection uses up to `generation.num_envs` environments at a time and stops exactly at this limit. |
+| `collection.partial_agents` | `10` | Number of first-agent partial-observation streams to save per episode. For example `2` writes `video_a1/00000.mp4` and `video_a2/00000.mp4`. |
 | `collection.save_trajectory` | `true` | If `true`, save one trajectory `.parquet` per episode under `trajectory/`. |
 | `collection.timestamp` | `null` | Optional fixed collection folder name. If unset, the folder name uses local time as `YYYYMMDD_HHMMSS`. |
 
-Collection runs create `collection.output_root/<timestamp>/settings.yaml`,
+Collection runs create `collection.output_root/recording/<timestamp>/settings.yaml`,
 `metadata.json`, `video_global/`, `video_a1/`, ..., and `trajectory/`. Episode
 files are named `00000.mp4`, `00001.mp4`, and so on. `settings.yaml` stores the
 resolved run settings at startup; `metadata.json` stores the episode records and
@@ -70,7 +70,7 @@ stats such as `total_count`.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `boids.num_agents` | `1500` | Number of boids in the flock. |
+| `boids.num_agents` | `100` | Number of boids in the flock. |
 | `boids.vision` | `25.0` | Neighbour radius in pixels for alignment, cohesion, and separation. |
 | `boids.accuracy` | `32.0` | Approximate number of nearby candidate boids sampled per boid. `0` means all candidates. |
 | `boids.alignment` | `1.1` | Weight applied to alignment steering. |
@@ -100,18 +100,18 @@ Color values are normalized RGB triples in `[0.0, 1.0]`.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `rendering.background_color` | `[0.0862745, 0.0862745, 0.0862745]` | Frame background color. The default is JS `0x161616`. |
+| `rendering.background_color` | `[0, 0, 0]` | Frame background color (black). |
 | `rendering.agent_color` | `[1.0, 1.0, 1.0]` | Fixed boid color used when `rendering.color_mode=fixed`. |
 | `rendering.aa_blur` | `1.0` | Anti-aliasing transition width in pixels. |
-| `rendering.boid_alpha` | `0.8` | Alpha used when compositing boids over the background. |
-| `rendering.color_mode` | `"speed"` | Boid color mode. Use `"speed"` for JS HSV speed tinting, or `"fixed"` to render every boid with `rendering.agent_color`. |
+| `rendering.boid_alpha` | `1` | Alpha used when compositing boids over the background. |
+| `rendering.color_mode` | `"fixed"` | Boid color mode. Use `"speed"` for JS HSV speed tinting, or `"fixed"` to render every boid with `rendering.agent_color`. |
 
 Examples:
 
 ```bash
-python data_recording.py rendering.color_mode=fixed rendering.agent_color=[1.0,1.0,1.0]
-python data_recording.py rendering.color_mode=fixed rendering.background_color=[0.0,0.0,0.0] rendering.agent_color=[0.2,0.8,1.0]
-python data_recording.py rendering.color_mode=speed
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 rendering.color_mode=fixed rendering.agent_color=[1.0,1.0,1.0]
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 rendering.color_mode=fixed rendering.background_color=[0.0,0.0,0.0] rendering.agent_color=[0.2,0.8,1.0]
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 rendering.color_mode=speed
 ```
 
 ## `video`
@@ -121,7 +121,7 @@ python data_recording.py rendering.color_mode=speed
 | `video.fps` | `30` | Output video frame rate. |
 | `video.duration` | `30.0` | Requested recording duration in seconds. |
 | `video.warmup` | `60` | Number of simulation steps to run before recording video or trajectory frames. Warmup does not count toward `video.duration`; the engine steps `video.warmup + fps * duration` times unless clipped by `env.max_steps`. |
-| `video.chunk_size` | `256` | Number of frames generated per JAX batch before copying to CPU for video encoding. Use `1` for the old per-frame path. In multi-env runs, the generated chunk has shape `(chunk_size, generation.num_envs, H, W, 3)`. |
+| `video.chunk_size` | `1000` | Number of frames generated per JAX batch before copying to CPU for video encoding. Use `1` for the old per-frame path. In multi-env runs, the generated chunk has shape `(chunk_size, generation.num_envs, H, W, 3)`. |
 | `video.full_obs_path` | `"output/full_obs.mp4"` | Output path for the full-frame video. |
 | `video.partial_obs_path` | `"output/partial_obs.mp4"` | Output path for the crop centered on agent 0. |
 | `video.full_obs_only` | `false` | If `true`, skip partial-observation video output. |

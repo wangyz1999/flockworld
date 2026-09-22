@@ -6,7 +6,7 @@ configs (``data.streaming.enabled: true``) have no ``data.root``, no precomputed
 latent cache, and no recorded GT trajectories on disk. This module generates a
 small, fixed set of long held-out episodes directly from the same JAX sim used at
 train time (``SimClipGenerator``, with ``return_gt_positions=True``) and VAE-encodes
-them, exposing the ``.episodes`` / ``.full_episode(e)`` contract ``eval_flock_multi.py``
+them, exposing the ``.episodes`` / ``.full_episode(e)`` contract ``modeling/cli/eval_flock_multi.py``
 already expects.
 
 Normalization: streaming checkpoints save no ``stats.pt`` (see

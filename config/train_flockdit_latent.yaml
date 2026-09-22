@@ -5,7 +5,7 @@ experiment_name: flock_dit_latent
 
 data:
   root: data/recording/20260623_135735   # 10k-episode set; has latent_cache + stats.pt
-  latent: true                    # use cached VAE latents (run precompute_latents.py first)
+  latent: true                    # use cached VAE latents (run modeling/cli/precompute_latents.py first)
   latent_cache_dir: latent_cache  # subfolder under data.root
   val_fraction: 0.1
   num_context_frames: 2           # LATENT frames (each ~= 4 pixel frames)

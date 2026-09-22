@@ -1,10 +1,10 @@
-"""Reshape compare_experiments.py's combined --save-json output into the one-file-per-
-experiment format plot_eval_sweep.py expects under results-dir/streaming_arch/.
+"""Reshape modeling/cli/compare_experiments.py's combined --save-json output into the one-file-per-
+experiment format scripts/figures/plot_eval_sweep.py expects under results-dir/streaming_arch/.
 
-compare_experiments.py evaluates every streaming-arch experiment (+ceiling +floor +any
+modeling/cli/compare_experiments.py evaluates every streaming-arch experiment (+ceiling +floor +any
 extra informational column) in ONE process, sharing the held-out episodes, and writes
 ONE json with a "columns" dict keyed by column name (ceiling/floor/exp01_baseline/...).
-plot_eval_sweep.py (written against eval_flock_multi.py's per-experiment --save-json)
+scripts/figures/plot_eval_sweep.py (written against modeling/cli/eval_flock_multi.py's per-experiment --save-json)
 instead expects one file per experiment, each with columns exactly {ceiling, model,
 baseline}. This splits the former into the latter, so the existing plotting/table code
 runs unmodified. The combined file (and the per-episode CSV next to it) stays as the
@@ -30,10 +30,10 @@ def _nanmean(vals):
 
 
 def _augment(col_summary: dict, per_episode_col: dict) -> dict:
-    """compare_experiments.py's own --save-json summary only aggregates the console-table
+    """modeling/cli/compare_experiments.py's own --save-json summary only aggregates the console-table
     keys (TIER_A_KEYS/CONSISTENCY_KEYS/PIXEL_KEYS); backfill 'volume' + sightings_per_frame
     /white_count_error from the raw per-episode records (also in comparison.json) so this
-    matches eval_flock_multi.py's schema (plot_eval_sweep.py's VOLUME_METRICS rows)."""
+    matches modeling/cli/eval_flock_multi.py's schema (scripts/figures/plot_eval_sweep.py's VOLUME_METRICS rows)."""
     consistency = per_episode_col.get("consistency", [])
     pixel = per_episode_col.get("pixel", [])
     out = {**col_summary}

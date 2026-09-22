@@ -1,4 +1,4 @@
-"""Shared plumbing for cross-view attention interpretability (see gen_attention_heatmap.py).
+"""Shared plumbing for cross-view attention interpretability (see scripts/figures/gen_attention_heatmap.py).
 
 Loads a multi-agent FlockDiT checkpoint + its non-streaming val dataset, runs one
 forward pass with ``return_attn=True`` at a chosen noise level, and returns the
@@ -14,11 +14,11 @@ import numpy as np
 import torch
 from einops import rearrange
 
-from eval_flock_dit import build_model, find_best_checkpoint
+from modeling.eval.common import build_model, find_best_checkpoint
 from modeling.configs import load_cfg
 from modeling.data.flocking_latent_dataset import FlockingLatentMultiDataset
 from modeling.models.frozen_vae import FrozenVAE
-from train_flock_dit import build_decode_fn
+from modeling.models.decoding import build_decode_fn
 
 ROOT = "data/recording/20260702160453"
 T_MAX = 1000.0
@@ -239,7 +239,7 @@ def synth_border0_episode(cfg, seed: int, ctx: int, wf: int, device: str):
     mean = stats["mean"].view(1, -1, 1, 1).to(device)
     std = stats["std"].view(1, -1, 1, 1).to(device)
 
-    def agg_actions(a, t_lat):  # (T_pix, 2) -> (t_lat, 2), causal 1+4k groups (matches precompute_latents.py)
+    def agg_actions(a, t_lat):  # (T_pix, 2) -> (t_lat, 2), causal 1+4k groups (matches modeling/cli/precompute_latents.py)
         groups = [a[0:1]]
         for i in range(t_lat - 1):
             groups.append(a[1 + 4 * i: 1 + 4 * (i + 1)])

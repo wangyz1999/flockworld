@@ -63,7 +63,7 @@ def _boid_heading(V: np.ndarray, lbl: np.ndarray, ids: np.ndarray) -> np.ndarray
     shape's tail-vs-nose mass asymmetry; ``nose = sign(skew) * axis`` is
     invariant to the arbitrary sign ``eigh`` returns for the axis (skew flips
     sign with the axis too). Sign validated empirically against GT headings on
-    real recorded (VAE round-tripped) frames -- ``validate_heading_detect.py``
+    real recorded (VAE round-tripped) frames -- ``scripts/diagnostics/validate_heading_detect.py``
     -- median angular error 1.2 deg, 94% within 15 deg, 3.4% land as
     near-total (>90 deg) nose/tail flips on degenerate/tiny detections.
     """

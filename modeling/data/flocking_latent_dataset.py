@@ -4,7 +4,7 @@ latent-frame window, normalizes to ~unit scale.
 Returns the same dict shape the FlowTrainer/world-model expect, but the
 "frames" are normalized VAE latents `(L, z_dim, h, w)` rather than RGB pixels.
 Train/val split mirrors FlockingVideoDataset (seeded split by episode id).
-Run ``precompute_latents.py`` first to populate the cache.
+Run ``modeling/cli/precompute_latents.py`` first to populate the cache.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class FlockingLatentDataset(Dataset):
         files = sorted(self.cache_dir.glob("ep*_a*.pt"))
         if not files:
             raise FileNotFoundError(
-                f"No cached latents in {self.cache_dir}. Run precompute_latents.py first."
+                f"No cached latents in {self.cache_dir}. Run modeling/cli/precompute_latents.py first."
             )
         stats = torch.load(self.cache_dir / "stats.pt", map_location="cpu")
         self.mean = stats["mean"].view(-1, 1, 1, 1)  # (z,1,1,1)

@@ -2,7 +2,7 @@
 
 No videos are read from or written to disk. Each dataloader worker runs its
 own CPU-pinned JAX boid simulation (the same ``flock_env`` + renderer used by
-``data_recording.py``), renders full frames, and cuts the same zero-padded
+``flockworld/cli/data_recording.py``), renders full frames, and cuts the same zero-padded
 128x128 agent-centred crops the recorder writes -- minus the H.264 round-trip.
 
 Every episode uses a fresh seed drawn from ``(base_seed, namespace, worker_id,

@@ -29,7 +29,7 @@ run_eval() {
   echo "[$(date --iso-8601=seconds)] === $group/$name === (log: $logf)"
   local t0 t1
   t0=$(date +%s)
-  if uv run python eval_flock_multi.py --mode metrics --episodes "$EPISODES" --seconds "$SECONDS_" --steps "$STEPS" \
+  if uv run python -m modeling.cli.eval_flock_multi --mode metrics --episodes "$EPISODES" --seconds "$SECONDS_" --steps "$STEPS" \
       --tag "$name" --save-json "$RESULTS_ROOT/$group/$name.json" "$@" > "$logf" 2>&1; then
     t1=$(date +%s)
     echo "[$(date --iso-8601=seconds)] OK: $group/$name ($((t1 - t0))s)"

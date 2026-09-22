@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import gymnasium as gym
 import numpy as np
 
 from flockworld.runtime import configure_jax_platform
+
+if TYPE_CHECKING:
+    from flockworld.env.flock_env import EnvConfig
 
 
 class FlockEnv(gym.Env):

@@ -13,7 +13,7 @@ agents localize each other, so no GT enters the scoring frame or event selection
 
 The position-matching helpers below (``implied_world``, ``_in_crop``,
 ``match_cross_view``) are GT-free *given* a camera position, and are still used by
-the corner-anchored probe (``probe_step3_quantify.py``), which recovers that
+the corner-anchored probe (``scripts/analysis/probe_step3_quantify.py``), which recovers that
 camera position from rendered walls rather than from GT -- so they stay.
 
 Detections are ``dets[agent][frame] -> (N,2)`` centroids; ``cam_idx[a]`` is the

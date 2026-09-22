@@ -208,9 +208,15 @@ __marimo__/
 
 
 /output/
+/outputs/
 /data/
 /pretrained/
 /wandb/
+/lightning_logs/
+
+# Ad-hoc recordings at the repository root (published media lives in docs/media/)
+/*.mp4
+/*.gif
 
 # Local clones of upstream projects, kept for reference only
 /refs/

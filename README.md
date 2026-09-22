@@ -57,9 +57,15 @@ Full-quality MP4s: [ground truth](docs/media/rollout_ground_truth.mp4) ·
 |---|---|---|
 | Flocking simulation, rendering, Gymnasium environment | JAX | `flockworld/` |
 | Video autoencoder + world model + training | PyTorch | `modeling/` |
-| Evaluation, metrics, probes, figure generation | NumPy/SciPy | `modeling/eval/`, root-level scripts |
+| Evaluation and reusable metrics | NumPy/SciPy, PyTorch | `modeling/eval/` |
+| Training and evaluation commands | PyTorch | `modeling/cli/` |
+| Analyses, diagnostics, figures, benchmarks | Various | `scripts/` |
 
 Training data is **simulated on the fly** — there is no dataset to download.
+
+Run commands from the repository root using `python -m`, as shown below. See
+[the repository guide](docs/REPOSITORY.md) for the command index, script
+migration guide, and checks to run when contributing.
 
 ## Installation
 
@@ -74,23 +80,27 @@ PyTorch use CUDA 13 (`jax[cuda13]`, torch `cu130` wheels).
 
 ### 1. Look at the environment
 
-Record a 30-second video with default settings:
+Record a 30-second video from one environment:
 
 ```bash
-python data_recording.py
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1
 ```
+
+The saved simulation config is set up for dataset collection. The overrides
+above select a single recording; they do not change that config. Video recording
+requires `ffmpeg` with H.264 support on your PATH.
 
 Override any parameter via the CLI (OmegaConf dot-list syntax):
 
 ```bash
-python data_recording.py boids.num_agents=100 canvas.width=512 canvas.height=512
-python data_recording.py video.duration=5 video.fps=60 seed=123
-python data_recording.py device=cpu
-python data_recording.py video.chunk_size=64
-python data_recording.py video.warmup=120
-python data_recording.py generation.num_envs=8 video.duration=5
-python data_recording.py trajectory.enabled=true
-python data_recording.py collection.enabled=true collection.total_episodes=100 generation.num_envs=8 collection.partial_agents=2
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 boids.num_agents=100 canvas.width=512 canvas.height=512
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 video.duration=5 video.fps=60 seed=123
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 device=cpu
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 video.chunk_size=64
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 video.warmup=120
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=8 video.duration=5
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 trajectory.enabled=true
+python -m flockworld.cli.data_recording collection.enabled=true collection.total_episodes=100 generation.num_envs=8 collection.partial_agents=2
 ```
 
 Output videos are written to `output/full_obs.mp4` (entire canvas) and
@@ -101,7 +111,7 @@ Set `trajectory.enabled=true` to also save per-frame state/action trajectories
 as `.parquet`. Each row is one recorded frame, with agent fields stored in wide
 columns like `a1_pos_x`, `a1_vel_x`, `a1_acc_x`, and `a1_acc_y`.
 
-Structured collection mode writes a timestamped dataset under `outputs/` with
+Structured collection mode writes a timestamped dataset under `data/recording/` with
 `settings.yaml`, `metadata.json`, `video_global/00000.mp4`,
 `video_a1/00000.mp4`, additional partial-agent folders up to
 `collection.partial_agents`, and per-episode trajectory files under
@@ -114,36 +124,36 @@ training is two steps: train the VAE, then train the world model on top of it.
 
 ```bash
 # (a) video autoencoder, in the agent-color condition
-uv run python train_vae.py --config config/train_vae_color_stream.yaml
+uv run python -m modeling.cli.train_vae --config config/train_vae_color_stream.yaml
 
 # (b) world model — point cfg.vae.checkpoint_path at the VAE you just trained
-uv run python train_flock_dit.py --config config/train_flockdit_latent_multi_stream.yaml
+uv run python -m modeling.cli.train_flock_dit --config config/train_flockdit_latent_multi_stream.yaml
 ```
 
 Single- vs multi-agent is selected by `data.num_agents` in the config. Both
 entry points take OmegaConf dot-list overrides after the config path:
 
 ```bash
-uv run python train_flock_dit.py --config config/train_flockdit.yaml \
+uv run python -m modeling.cli.train_flock_dit --config config/train_flockdit.yaml \
     device=cpu dataloader.batch_size=1 train.epochs=1     # CPU smoke test
 ```
 
 The streaming configs simulate fresh clips throughout training. To train from a
 pre-recorded corpus instead, cache latents once with
-`precompute_latents.py` and use one of the non-streaming configs.
+`modeling/cli/precompute_latents.py` and use one of the non-streaming configs.
 
 ### 3. Evaluate
 
 ```bash
 # qualitative: tile all 10 rolled-out views into one grid video
-uv run python eval_flock_multi.py --config <experiment.yaml> --mode overlay --source pred
+uv run python -m modeling.cli.eval_flock_multi --config <experiment.yaml> --mode overlay --source pred
 
 # quantitative: per-view fidelity + cross-view consistency, with ceiling and floor
-uv run python eval_flock_multi.py --config <experiment.yaml> \
+uv run python -m modeling.cli.eval_flock_multi --config <experiment.yaml> \
     --mode metrics --episodes 6 --seconds 10 --baseline single
 
 # all experiments side by side in one table
-uv run python compare_experiments.py --include exp01_baseline exp03_diffusion_forcing \
+uv run python -m modeling.cli.compare_experiments --include exp01_baseline exp03_diffusion_forcing \
     --episodes 6 --seconds 10
 ```
 
@@ -244,7 +254,7 @@ argument and config reference in [docs/CONFIG.md](docs/CONFIG.md).
 To tint all boids a fixed custom color (the default is white):
 
 ```bash
-python data_recording.py rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
+python -m flockworld.cli.data_recording collection.enabled=false generation.num_envs=1 rendering.color_mode=fixed rendering.agent_color=[0.7,0.9,1.0]
 ```
 
 ## Model
@@ -367,7 +377,7 @@ pretrain and as the evaluation **floor**.
 Each one-stage experiment:
 
 ```bash
-timeout 48h python train_flock_dit.py --config <experiment.yaml> \
+timeout 48h python -m modeling.cli.train_flock_dit --config <experiment.yaml> \
     data.streaming.clips_per_epoch=20000 train.epochs=-1 train.save_every=2
 ```
 
@@ -436,7 +446,7 @@ same identity-and-consistency analysis using *headings* instead of hues.
 Compare CPU and GPU rendering throughput across agent counts:
 
 ```bash
-python scripts/benchmark_render_speed.py --frames 120 --agents 100,250,500,1000,1500
+python -m scripts.benchmarks.benchmark_render_speed --frames 120 --agents 100,250,500,1000,1500
 ```
 
 The benchmark writes `output/benchmarks/render_speed.json`,
@@ -446,52 +456,35 @@ The benchmark writes `output/benchmarks/render_speed.json`,
 
 ## Repository structure
 
-```
-flockworld/            simulation + environment (JAX)
-  core/
-    types.py           State dataclasses (BoidState, EnvState)
-    boids.py           Flocking rules: separation, alignment, cohesion
-  rendering/
-    primitives.py      SDF math: smoothstep, rotate_2d, sd_triangle
-    renderer.py        Compose full frame from BoidState
-  env/
-    flock_env.py       Pure-JAX reset / step functions
-    gym_wrapper.py     gymnasium.Env subclass
-  video/
-    recorder.py        Full-obs & partial-obs video writer
-  policies.py          Steering policies
+```text
+flockworld/              Simulation and environment (JAX)
+  cli/                   Simulation recording command
+  core/                  Boid state and flocking rules
+  rendering/             Primitives and frame rendering
+  env/                   Pure-JAX environment and Gymnasium wrapper
+  video/                 Recording and crop utilities
+  policies.py            Steering policies
 
-modeling/              autoencoder + world model (PyTorch)
-  models/
-    flock_dit.py       Flow-matching DiT over latents
-    frozen_vae.py      Frozen autoencoder wrapper
-    vae_module.py      VAE training module
-  data/                streaming + cached datasets, action pooling
-  training/
-    flow_trainer.py    Flow-matching training loop
-  eval/
-    boid_detect.py     Boid detector (centroid, hue, heading)
-    pair_consistency.py  Cross-view consistency metrics
-    heading_consistency.py  GT-free identity via headings
-    attention_probe.py   Cross-view attention interpretability
-    overlay.py         Overlays and view tiling
-  flow_matching.py     Objective + autoregressive rollout
+modeling/                Autoencoder and world model (PyTorch)
+  cli/                   Training, evaluation, comparison, latent caching commands
+  models/                FlockDiT, VAE, and cached-latent decoding
+  data/                  Streaming and cached datasets, action pooling
+  training/              Training loops
+  eval/                  Metrics, rollouts, checkpoint helpers, experiment registry
+  legacy/                Earlier action-conditioned video baseline
+  flow_matching.py       Objective and autoregressive sampling
 
-config/                one YAML per experiment slot
-jobs/                  SLURM job scripts per campaign
-docs/                  CONFIG.md, experiment logs
-scripts/               render benchmark
+scripts/
+  analysis/              Attention, action-conditioning, and wall-event probes
+  diagnostics/           Manual checks requiring data or checkpoints
+  figures/               Paper figures, evaluation plots, and rollout videos
+  benchmarks/            Simulator render benchmarks
 
-data_recording.py      record simulation videos
-train_vae.py           train the video autoencoder
-train_flock_dit.py     train the world model
-precompute_latents.py  cache latents for non-streaming training
-eval_flock_dit.py      single-agent rollout evaluation
-eval_flock_multi.py    multi-agent cross-view evaluation
-compare_experiments.py cross-experiment comparison table
-probe_*.py             action-conditioning diagnostics
-analyze_*.py           attention analyses
-gen_*.py               figure and rollout-video generation
+config/                  Experiment YAMLs and cluster path settings
+jobs/                    Training and evaluation shell scripts per campaign
+tests/                   Automated checks using small synthetic inputs
+docs/                    Configuration guide, repository guide, logs, and media
+eval_results/            Published reports, tables, plots, and measurements
 ```
 
 ## Extensibility
@@ -517,12 +510,12 @@ perfect, and the cross-view tier requires the agent-color cue. Everything is
 bounded by the frozen autoencoder: no model in this latent space can exceed its
 reconstruction ceiling.
 
-## Legacy paths
+## Legacy baseline
 
-`train_world_model.py` and `modeling/train.py` are the earlier Solaris-style
-training entry point, superseded by `train_flock_dit.py`. They are kept for
-reference and are not maintained; the default config path they expect no longer
-exists.
+The earlier Solaris-style training entry point is retained in
+`modeling/legacy/train_world_model.py`, with defaults in `config/train_wm.yaml`.
+Run it with `python -m modeling.legacy.train_world_model`. The paper's world model
+uses `python -m modeling.cli.train_flock_dit --config <experiment.yaml>`.
 
 ## License
 
