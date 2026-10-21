@@ -598,7 +598,6 @@ configuration (8 latent channels, 16x spatial and 4x temporal compression).
 
 ## Citation
 
-FlockWorld is by Meryem Koksal (Grinnell College), Yunzhe Wang (University of
+FlockWorld is by Meryem Vera Koksal (Grinnell College), Yunzhe Wang (University of
 Southern California), and Volkan Ustun (USC Institute for Creative
-Technologies). Machine-readable metadata is in [CITATION.cff](CITATION.cff); a
-paper reference will be added here once it is public.
+Technologies). Machine-readable metadata is in [CITATION.cff](CITATION.cff).
