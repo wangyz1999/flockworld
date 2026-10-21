@@ -10,7 +10,9 @@ this repository is built to answer is whether those ten views stay *mutually
 consistent*: when agent 3 sees agent 7 off to its left, does agent 7's own view
 agree that agent 3 is off to its right?
 
-📄 **Paper:** _to appear_ · 🎬 [Rollouts](#rollouts) · 🧪 [Experiments](#experiments) · 📊 [Reproducing the paper](#reproducing-the-paper)
+📄 **Paper:** [FlockWorld: Toward Population-Scale Multi-Agent Video World Models through Artificial Life Simulation](https://openreview.net/forum?id=UNYtDnRWwP)
+
+🎬 [Rollouts](#rollouts) · 🧪 [Experiments](#experiments) · 📊 [Reproducing the paper](#reproducing-the-paper)
 
 ---
 
