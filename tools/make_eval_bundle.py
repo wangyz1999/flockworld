@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 from pathlib import Path
 
 import torch
@@ -58,7 +59,31 @@ def _save_slim(src: Path, dst: Path, keep) -> dict:
 
 
 def _best_epoch(ckpt_dir: Path) -> Path:
-    """Same rule as eval_flock_dit.find_best_checkpoint (lowest stored val_loss)."""
+    """Same rule as eval_flock_dit.find_best_checkpoint (lowest stored val_loss).
+
+    Fast path: the trainer prints ``epoch=E ... val_loss=V`` to logs/stdout.log, and
+    the checkpoint stores that same val_loss, so the minimum over the epochs that
+    have a saved epoch_E.pt is the scan's answer without unpickling ~100 files over
+    NFS. The pick is verified against the file's stored val_loss; on any mismatch
+    (or no log) fall back to the full scan.
+    """
+    log = ckpt_dir.parent / "logs" / "stdout.log"
+    if log.exists():
+        logged = {}
+        for m in re.finditer(r"^epoch=(\d+) train_loss=\S+ val_loss=(\S+)", log.read_text(), re.M):
+            logged[int(m.group(1))] = float(m.group(2))
+        saved = {int(p.stem.split("_")[1]): p for p in ckpt_dir.glob("epoch_*.pt")}
+        cand = {e: v for e, v in logged.items() if e in saved}
+        if cand:
+            # The log rounds to 6 decimals: load every epoch within rounding of the
+            # minimum and take the exact minimum (first in sorted order, as the scan).
+            lo = min(cand.values())
+            near = sorted(e for e, v in cand.items() if v <= lo + 2e-6)
+            stored = {e: torch.load(saved[e], map_location="cpu", weights_only=False,
+                                    mmap=True).get("val_loss") for e in near}
+            if all(v is not None and abs(float(v) - cand[e]) < 1e-5 for e, v in stored.items()):
+                return saved[min(near, key=lambda e: float(stored[e]))]
+            print(f"  [best-epoch] log/ckpt val mismatch in {ckpt_dir}; full scan", flush=True)
     best, best_val = None, float("inf")
     for p in sorted(ckpt_dir.glob("epoch_*.pt")):
         v = torch.load(p, map_location="cpu", weights_only=False, mmap=True).get("val_loss")
