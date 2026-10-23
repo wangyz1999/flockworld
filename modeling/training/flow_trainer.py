@@ -216,6 +216,19 @@ class FlowTrainer:
             signal.signal(signum, handler)
 
     def _request_stop(self, signum, _frame):
+        """Graceful stop on SIGTERM/SIGINT: finish the current step, save, exit.
+
+        ``timeout`` (and Ctrl-C) signals the whole process group, so DataLoader
+        workers die on the same signal. PyTorch's SIGCHLD watchdog would then raise
+        ``DataLoader worker ... is killed by signal: Terminated`` from inside the
+        in-flight step, crashing the run before the graceful save (the Aug 9
+        agent-count sweep lost its final steps this way). Disarm it here: we're
+        shutting down and fetch no further batches. Python runs pending handlers in
+        signal-number order, so this SIGTERM (15) handler runs before SIGCHLD (17).
+        Workers must keep their default SIGTERM disposition -- multiprocessing's
+        exit path ``terminate()``s and joins them, which would hang otherwise.
+        """
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         if not self.stop_requested:
             self.stop_requested = True
             self.stop_signal = signal.Signals(signum).name
