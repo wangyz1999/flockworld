@@ -1,0 +1,155 @@
+{
+  "experiment": "color_bg_agents02_best",
+  "config": "config/train_flockdit_latent_multi_stream_df.yaml",
+  "overrides": [
+    "vae.checkpoint_path=/tmp/instance_storage/work/yunzhewa-20261023-140031-evalac/bundle/pretrained/color_bg_stream/vae-6928-0.0034.ckpt",
+    "data.num_agents=2",
+    "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=true,collection.partial_agents=2]",
+    "output_dir=/tmp/instance_storage/work/yunzhewa-20261023-140031-evalac/bundle/output/agentcount_df_20260809/color_bg/color_bg-agents02-10939350_0"
+  ],
+  "output_dir": "/tmp/instance_storage/work/yunzhewa-20261023-140031-evalac/bundle/output/agentcount_df_20260809/color_bg/color_bg-agents02-10939350_0",
+  "streaming": true,
+  "num_agents": 2,
+  "background_size": 31,
+  "hue_smooth": {
+    "window": 0,
+    "link_dist": 8.0
+  },
+  "eval_args": {
+    "episodes": 3,
+    "seconds": 6.0,
+    "sim_fps": 30,
+    "steps": 50,
+    "eval_seed": 0,
+    "baseline": "single"
+  },
+  "model_checkpoint": {
+    "path": "/tmp/instance_storage/work/yunzhewa-20261023-140031-evalac/bundle/output/agentcount_df_20260809/color_bg/color_bg-agents02-10939350_0/checkpoints/epoch_0266.pt",
+    "val_loss": 0.18413239950314164
+  },
+  "baseline_config": "config/train_flockdit_latent_single_stream.yaml",
+  "baseline_output_dir": "/tmp/instance_storage/work/yunzhewa-20261023-140031-evalac/bundle/output/agentcount_df_20260809/color_bg/color_bg-floor-10939363_6",
+  "baseline_checkpoint": {
+    "path": "/tmp/instance_storage/work/yunzhewa-20261023-140031-evalac/bundle/output/agentcount_df_20260809/color_bg/color_bg-floor-10939363_6/checkpoints/epoch_0182.pt",
+    "val_loss": 0.19540200755000114
+  },
+  "n_ep": 3,
+  "columns": {
+    "ceiling": {
+      "tier_a": {
+        "detection_rate": 0.952811156914079,
+        "position_error": 1.4944793908751437,
+        "mean_detected_per_frame": 5.9858757062146895,
+        "mean_gt_visible_per_frame": 6.199623352165726
+      },
+      "consistency": {
+        "reciprocity_rate": 0.0,
+        "displacement_error": NaN,
+        "motion_error": NaN,
+        "white_correspondence": 0.0,
+        "white_count_error": NaN,
+        "sightings_per_frame": 0.11676082862523542
+      },
+      "pixel": {
+        "psnr": NaN,
+        "ssim": NaN,
+        "mean_overlap_frac": NaN
+      },
+      "volume": {
+        "n_sightings": 62,
+        "n_reciprocal": 0,
+        "n_matched_white": 0,
+        "n_overlap_white": 0,
+        "n_pixel_events": 0
+      },
+      "hue_smoothing": {
+        "relabeled_frac": 0.019342213295092787,
+        "n_tracks": 83.66666666666667,
+        "mean_track_len": 25.147252747252747
+      }
+    },
+    "model": {
+      "tier_a": {
+        "detection_rate": 0.21830937764927172,
+        "position_error": 2.102995805057486,
+        "mean_detected_per_frame": 5.328625235404896,
+        "mean_gt_visible_per_frame": 6.199623352165726
+      },
+      "consistency": {
+        "reciprocity_rate": 0.36806701625380067,
+        "displacement_error": 50.54574203212599,
+        "motion_error": 17.56247880518475,
+        "white_correspondence": 0.03543038837156484,
+        "white_count_error": 3.1309386973180082,
+        "sightings_per_frame": 0.5630885122410546
+      },
+      "pixel": {
+        "psnr": 10.979285443838558,
+        "ssim": 0.44268949241097894,
+        "mean_overlap_frac": 0.6648217913748204
+      },
+      "volume": {
+        "n_sightings": 299,
+        "n_reciprocal": 58,
+        "n_matched_white": 6,
+        "n_overlap_white": 216,
+        "n_pixel_events": 58
+      },
+      "hue_smoothing": {
+        "relabeled_frac": 0.11490760062725809,
+        "n_tracks": 169.0,
+        "mean_track_len": 12.568507925950561
+      }
+    },
+    "baseline": {
+      "tier_a": {
+        "detection_rate": 0.22342389329054835,
+        "position_error": 2.0238206283620315,
+        "mean_detected_per_frame": 4.86346516007533,
+        "mean_gt_visible_per_frame": 6.199623352165726
+      },
+      "consistency": {
+        "reciprocity_rate": 0.2982827569983533,
+        "displacement_error": 61.65146177344852,
+        "motion_error": 12.146508491039276,
+        "white_correspondence": 0.012121212121212121,
+        "white_count_error": 2.1024305555555554,
+        "sightings_per_frame": 0.5404896421845574
+      },
+      "pixel": {
+        "psnr": 13.291922865154342,
+        "ssim": 0.5344026217202622,
+        "mean_overlap_frac": 0.6790849897596571
+      },
+      "volume": {
+        "n_sightings": 287,
+        "n_reciprocal": 50,
+        "n_matched_white": 4,
+        "n_overlap_white": 163,
+        "n_pixel_events": 50
+      },
+      "hue_smoothing": {
+        "relabeled_frac": 0.17662168127101951,
+        "n_tracks": 144.33333333333334,
+        "mean_track_len": 12.692119413708193
+      }
+    }
+  },
+  "psnr_by_overlap": {
+    "0.00-0.50": {
+      "ceiling": null,
+      "model": 14.56007198879466,
+      "baseline": 12.482367952507403
+    },
+    "0.50-0.75": {
+      "ceiling": null,
+      "model": 11.115041012940722,
+      "baseline": 14.68599076821611
+    },
+    "0.75-1.01": {
+      "ceiling": null,
+      "model": 10.953993094491434,
+      "baseline": 11.096430956957677
+    }
+  }
+}
