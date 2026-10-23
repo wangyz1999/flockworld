@@ -224,3 +224,6 @@ __marimo__/
 .claude
 .codex
 .agents
+
+# off-cluster path config (copy of config/local_paths.conf.example)
+config/local_paths.conf

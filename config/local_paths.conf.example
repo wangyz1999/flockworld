@@ -1,0 +1,5 @@
+# Paths for running FlockWorld eval off-cluster. Copy to config/local_paths.conf
+# (gitignored if you add it) and edit. See docs/handoff_eval_agentcount_df.md.
+export FLOCKWORLD_CODE_DIR="$HOME/flockworld"                 # this repo's clone
+export FLOCKWORLD_STORAGE_DIR="$HOME/flockworld_eval_bundle"  # the downloaded HF bundle
+export FLOCKWORLD_VAE_CHECKPOINT="$FLOCKWORLD_STORAGE_DIR/pretrained/color_agent_stream/vae-1976-0.0018.ckpt"

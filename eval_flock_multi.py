@@ -79,11 +79,25 @@ def _num_camera_agents(cfg, default: int) -> int:
     return int(default)
 
 
-def _load_model(cfg, output_dir, device, return_info=False):
-    ckpt, val = find_best_checkpoint(Path(output_dir) / "checkpoints")
-    print(f"checkpoint: {ckpt} (val_loss={val:.5f})")
+def _load_model(cfg, output_dir, device, return_info=False, checkpoint=None):
+    """``checkpoint``: None = best-val epoch checkpoint; otherwise a path, or a bare
+    file name (e.g. ``step_00075000.pt``) resolved under ``<output_dir>/checkpoints``.
+    Step checkpoints carry no val_loss, so ``val`` is None for them."""
+    if checkpoint is None:
+        ckpt, val = find_best_checkpoint(Path(output_dir) / "checkpoints")
+        state = torch.load(ckpt, map_location="cpu", weights_only=False)
+    else:
+        ckpt = Path(checkpoint)
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = Path(output_dir) / "checkpoints" / ckpt
+        if not ckpt.exists():
+            raise FileNotFoundError(f"checkpoint not found: {ckpt}")
+        state = torch.load(ckpt, map_location="cpu", weights_only=False)
+        val = state.get("val_loss")
+    val_str = "n/a" if val is None else f"{float(val):.5f}"
+    print(f"checkpoint: {ckpt} (val_loss={val_str}, global_step={state.get('global_step')})")
     m = build_model(cfg).to(device)
-    m.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=False)["model"])
+    m.load_state_dict(state["model"])
     m = m.eval()
     return (m, str(ckpt), val) if return_info else m
 
@@ -303,6 +317,12 @@ def main():
                          "config when --config is a streaming config.")
     ap.add_argument("--baseline-output-dir", default=None,
                     help="output_dir of the single-agent model (for --baseline single).")
+    ap.add_argument("--checkpoint", default=None,
+                    help="model checkpoint: a path, or a file name under <output_dir>/checkpoints "
+                         "(e.g. step_00075000.pt for a step-matched comparison). Default: the "
+                         "epoch checkpoint with the lowest val_loss.")
+    ap.add_argument("--baseline-checkpoint", default=None,
+                    help="same as --checkpoint, for the --baseline single model.")
     ap.add_argument("--episodes", type=int, default=3)
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--sim-fps", type=int, default=30)
@@ -389,13 +409,15 @@ def main():
     model_ckpt = baseline_ckpt = None
     if args.mode == "metrics" or args.source == "pred":
         print("multi-agent model:")
-        model, ckpt_path, val_loss = _load_model(cfg, cfg.output_dir, device, return_info=True)
+        model, ckpt_path, val_loss = _load_model(cfg, cfg.output_dir, device, return_info=True,
+                                                 checkpoint=args.checkpoint)
         model_ckpt = {"path": ckpt_path, "val_loss": val_loss}
     if args.mode == "metrics" and args.baseline == "single":
         bov = [f"output_dir={args.baseline_output_dir}"] if args.baseline_output_dir else []
         bcfg = load_cfg(args.baseline_config, bov)
         print("single-agent baseline model:")
-        baseline_model, bckpt_path, bval_loss = _load_model(bcfg, bcfg.output_dir, device, return_info=True)
+        baseline_model, bckpt_path, bval_loss = _load_model(bcfg, bcfg.output_dir, device, return_info=True,
+                                                            checkpoint=args.baseline_checkpoint)
         baseline_ckpt = {"path": bckpt_path, "val_loss": bval_loss}
 
     if args.mode == "metrics":

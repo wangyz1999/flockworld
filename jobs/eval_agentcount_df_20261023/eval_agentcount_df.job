@@ -1,0 +1,112 @@
+#!/bin/bash
+#SBATCH --account=ustun_1726
+#SBATCH --partition=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --constraint=a40|a100
+#SBATCH --gres=gpu:1
+#SBATCH --mem=64G
+#SBATCH --time=06:00:00
+#SBATCH --array=0-2
+#SBATCH --job-name=flockdit-eval-agentcount-df
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
+
+# Metrics eval of the Aug 9 diffusion-forcing agent-count sweep
+# (jobs/agentcount_df_20260809). One array task per encoder group:
+#   0 color_agent   1 color_bg   2 random_hue
+# Each task evaluates N = 2,5,8,10,20,30 against THAT group's own floor
+# (--baseline single), at two checkpoint choices:
+#   best    -- lowest-val epoch checkpoint (model and floor each)
+#   step75k -- step_00075000.pt for model and floor: the largest step every run
+#              reached (N=30 trained only 18 epochs), so N is compared at equal steps
+#
+# Eval settings match eval_results/20260809_full_sweep (3 episodes x 6 s, 50 Euler
+# steps). Hue smoothing is on (current default); that sweep predates it, so
+# compare against it with that caveat.
+#
+# Submit:  sbatch jobs/eval_agentcount_df_20261023/eval_agentcount_df.job
+# One group: sbatch --array=1 jobs/eval_agentcount_df_20261023/eval_agentcount_df.job
+# Smoke test: sbatch --partition=debug --time=0:30:00 --constraint=a40 --array=0 \
+#   --export=ALL,MODES=step75k,AGENT_COUNTS=2,EPISODES=1,EVAL_ROOT=<scratch dir> <this job>
+
+set -uo pipefail
+
+# Also runs outside SLURM (see run_eval_local.sh / docs/handoff_eval_agentcount_df.md):
+# set GROUP=<group> and FLOCKWORLD_PATH_CONFIG=<paths file>, then `bash` this file.
+PATH_CONFIG="${FLOCKWORLD_PATH_CONFIG:-${SLURM_SUBMIT_DIR:-$(pwd)}/config/slurm_paths.conf}"
+source "$PATH_CONFIG"
+cd "$FLOCKWORLD_CODE_DIR"
+export PYTHONUNBUFFERED=1
+[[ -n "${SLURM_JOB_ID:-}" && -d /scratch1 ]] && export TMPDIR="/scratch1/$USER/tmp" && mkdir -p "$TMPDIR"
+
+GROUPS_=(color_agent color_bg random_hue)
+if [[ -z "${GROUP:-}" ]]; then
+  GROUP="${GROUPS_[${SLURM_ARRAY_TASK_ID:?set GROUP or run as a SLURM array task}]:?bad SLURM_ARRAY_TASK_ID}"
+fi
+
+case "$GROUP" in
+  color_agent) VAE="$FLOCKWORLD_STORAGE_DIR/pretrained/color_agent_stream/vae-1976-0.0018.ckpt"; BG=false ;;
+  color_bg)    VAE="$FLOCKWORLD_STORAGE_DIR/pretrained/color_bg_stream/vae-6928-0.0034.ckpt";    BG=true  ;;
+  random_hue)  VAE="$FLOCKWORLD_STORAGE_DIR/pretrained/random_hue_stream/vae-2433-0.0015.ckpt"; BG=false ;;
+  *) echo "unknown GROUP=$GROUP (want color_agent | color_bg | random_hue)" >&2; exit 2 ;;
+esac
+
+TRAIN_ROOT="$FLOCKWORLD_STORAGE_DIR/output/agentcount_df_20260809/$GROUP"
+EVAL_ROOT="${EVAL_ROOT:-$FLOCKWORLD_CODE_DIR/eval_results/agentcount_df_20260809}"
+LOG_DIR="$EVAL_ROOT/logs"
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${GROUP}_driver.log") 2> >(tee -a "$LOG_DIR/${GROUP}_driver.log" >&2)
+
+EPISODES="${EPISODES:-3}"
+SECONDS_="${SECONDS_:-6}"
+STEPS="${STEPS:-50}"
+STEP_CKPT="${STEP_CKPT:-step_00075000.pt}"
+MODES="${MODES:-best step75k}"
+AGENT_COUNTS="${AGENT_COUNTS:-2 5 8 10 20 30}"
+
+command -v module >/dev/null 2>&1 && module restore
+
+run_dir() {   # run_dir <key>  -> the single run directory for that key in this group
+  local matches=("$TRAIN_ROOT/${GROUP}-$1-"*)
+  [[ ${#matches[@]} -eq 1 && -d "${matches[0]}" ]] || { echo "expected one run dir for $GROUP/$1, got: ${matches[*]}" >&2; return 1; }
+  echo "${matches[0]}"
+}
+
+FLOOR_DIR="$(run_dir floor)" || exit 1
+n_fail=0
+
+for mode in $MODES; do
+  ckpt_args=()
+  [[ "$mode" == step75k ]] && ckpt_args=(--checkpoint "$STEP_CKPT" --baseline-checkpoint "$STEP_CKPT")
+  mkdir -p "$EVAL_ROOT/$mode/$GROUP"
+  for n in $AGENT_COUNTS; do
+    key="$(printf 'agents%02d' "$n")"
+    dir="$(run_dir "$key")" || { n_fail=$((n_fail + 1)); continue; }
+    logf="$LOG_DIR/${mode}_${GROUP}_${key}.log"
+    echo "[$(date --iso-8601=seconds)] === $mode $GROUP/$key === (log: $logf)"
+    t0=$(date +%s)
+    if uv run python eval_flock_multi.py --mode metrics \
+        --episodes "$EPISODES" --seconds "$SECONDS_" --steps "$STEPS" \
+        --tag "${GROUP}_${key}_${mode}" \
+        --save-json "$EVAL_ROOT/$mode/$GROUP/$key.json" \
+        --config config/train_flockdit_latent_multi_stream_df.yaml \
+        --baseline single \
+        --baseline-config config/train_flockdit_latent_single_stream.yaml \
+        --baseline-output-dir "$FLOOR_DIR" \
+        "${ckpt_args[@]}" \
+        "vae.checkpoint_path=$VAE" \
+        "data.num_agents=$n" \
+        "data.streaming.sim_overrides=[rendering.color_mode=agent_id,rendering.background_gradient=$BG,collection.partial_agents=$n]" \
+        "output_dir=$dir" > "$logf" 2>&1; then
+      echo "[$(date --iso-8601=seconds)] OK: $mode $GROUP/$key ($(( $(date +%s) - t0 ))s)"
+    else
+      echo "[$(date --iso-8601=seconds)] FAILED: $mode $GROUP/$key ($(( $(date +%s) - t0 ))s) -- see $logf" >&2
+      n_fail=$((n_fail + 1))
+    fi
+  done
+done
+
+echo "[$(date --iso-8601=seconds)] $GROUP done, $n_fail failure(s)"
+exit $(( n_fail > 0 ))
